@@ -1,0 +1,30 @@
+# Roda os testes e o build em cada pull request, para que a integração só
+# aconteça com tudo verde. Não publica nada.
+
+name: Verificar
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: verificar-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  testar:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Testes das regras de cálculo e liberação
+        run: npm test
+      - name: Verificação de tipos e build de produção
+        run: npm run build
