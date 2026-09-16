@@ -48,12 +48,25 @@ Falta apenas **um clique seu**, porque essa configuração exige a sua conta:
 1. Abra o repositório no GitHub.
 2. Vá em **Settings** (Configurações) → **Pages**, no menu da esquerda.
 3. Em **Build and deployment** → **Source**, escolha **GitHub Actions**.
-4. Pronto. Vá na aba **Actions**, abra o fluxo "Publicar demonstração" e clique em **Run workflow**
-   (ou apenas faça um novo envio de código; ele roda sozinho).
+4. Pronto. A cada envio para a `main`, a publicação roda sozinha. Para rodar na hora,
+   vá na aba **Actions**, abra "Publicar demonstração" e clique em **Run workflow**.
 5. Ao terminar, o endereço aparece na própria execução e em **Settings → Pages**.
    Ele tem o formato `https://<seu-usuario>.github.io/reten-mvp/`.
 
 Esse é o link que você compartilha com o grupo.
+
+**Sobre o caminho base.** No GitHub Pages de um repositório de projeto, a aplicação fica em
+uma subpasta (`/reten-mvp/`) em vez da raiz do domínio. O projeto lida com isso usando
+caminhos relativos (`base: './'` no `vite.config.ts`) em vez de fixar `/reten-mvp/`:
+funciona igual na subpasta do Pages, na raiz do Netlify e se o repositório for renomeado.
+As rotas usam `#` pelo mesmo motivo — nenhuma configuração de servidor é necessária.
+
+Para conferir você mesmo, servindo o build exatamente como o Pages faz:
+
+```bash
+npm run build
+node scripts/servir-subpasta.mjs   # abre em http://localhost:4199/reten-mvp/
+```
 
 ### Opção B — Netlify ou Vercel, arrastando a pasta
 
@@ -210,7 +223,7 @@ src/
   components/      componentes visuais reutilizáveis
   views/           telas de cada perfil
 tests/             testes das regras de cálculo e de liberação
-scripts/           execução dos testes e teste de ponta a ponta no navegador
+scripts/           testes, teste de ponta a ponta no navegador e servidor de subpasta
 ```
 
 As regras de cálculo e de elegibilidade ficam separadas dos componentes visuais de propósito:
@@ -224,6 +237,9 @@ As regras de cálculo e de elegibilidade ficam separadas dos componentes visuais
 npm test          # 22 testes das regras de cálculo, elegibilidade e liberação
 npm run build     # verificação de tipos + build de produção
 ```
+
+Os dois rodam automaticamente em cada pull request (`.github/workflows/verificar.yml`)
+e antes de cada publicação.
 
 Há também um teste de ponta a ponta que percorre o fluxo inteiro em um navegador real
 (48 verificações). Ele precisa do Playwright, que não faz parte das dependências do projeto:
