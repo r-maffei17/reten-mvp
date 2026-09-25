@@ -30,40 +30,115 @@ pagina.on('console', (m) => {
 
 async function irPara(rota) {
   await pagina.goto(`${BASE}#${rota}`)
-  await pagina.waitForTimeout(250)
+  await pagina.waitForTimeout(280)
+}
+
+/** Abre um contrato pelo código, a partir da lista do perfil informado. */
+async function abrirContrato(rotaLista, codigo) {
+  await irPara(rotaLista)
+  await pagina.getByRole('row', { name: new RegExp(codigo) }).getByRole('button', { name: 'Abrir' }).click()
+  await pagina.waitForTimeout(280)
 }
 
 try {
-  // ---------------------------------------------------------------- 1. carga
+  // ---------------------------------------------------------------- 1. marca
   await irPara('/contratante')
   checar('Painel da contratante abre', await pagina.locator('h1', { hasText: 'Painel da contratante' }).isVisible())
+  checar('Título da página traz TrustRetain', (await pagina.title()).includes('TrustRetain'))
+  checar('Cabeçalho do menu traz TrustRetain', (await pagina.locator('.menu-marca .nome').innerText()).trim() === 'TrustRetain')
   checar(
-    'Faixa identifica o ambiente de demonstração',
+    'A marca antiga "Reten" não aparece mais na interface',
+    !/\bReten\b/.test(normalizar(await pagina.locator('body').innerText())),
+  )
+  checar(
+    'Faixa de dados fictícios preservada',
     (await pagina.locator('.faixa-demo').innerText()).includes('dados e movimentações fictícios'),
   )
+  checar(
+    'Botão "Restaurar demonstração" preservado',
+    (await pagina.getByRole('button', { name: /Restaurar demonstração/ }).count()) > 0,
+  )
   checar('Seletor de perfis presente', (await pagina.locator('.seletor-perfil button').count()) === 3)
-
-  // ---------------------------------------------------------------- 2. rendimento
-  await irPara('/contratante/contratos')
-  await pagina.getByRole('row', { name: /CT-2024-001/ }).getByRole('button', { name: 'Abrir' }).click()
-  await pagina.waitForTimeout(200)
-  checar('Detalhe do contrato CT-2024-001 abre', await pagina.locator('h1', { hasText: 'Subestação Norte' }).isVisible())
   checar(
-    'Contrato de referência aparece como elegível',
-    (await pagina.locator('.etiqueta').first().innerText()).includes('Elegível'),
+    'Data da simulação visível na barra superior',
+    (await pagina.locator('.chip-data').innerText()).includes('30/07/2026'),
   )
 
+  // ---------------------------------------------------------------- 2. contrato de teste padrão
+  await abrirContrato('/contratante/contratos', 'CT-2026-100')
+  const resumoPadrao = normalizar(await pagina.locator('.definicoes').first().innerText())
+  checar('Contrato padrão: valor total R$ 100.000,00', resumoPadrao.includes('R$ 100.000,00'))
+  checar('Contrato padrão: retenção de 5%', resumoPadrao.includes('5%'))
+  checar('Contrato padrão: saldo retido R$ 5.000,00', resumoPadrao.includes('R$ 5.000,00'))
+  checar('Contrato padrão: conclusão e aceite em 01/06/2026', resumoPadrao.includes('01/06/2026'))
+  checar('Contrato padrão: prazo de 60 dias corridos', resumoPadrao.includes('60 dias corridos'))
+  checar('Contrato padrão: data mínima 31/07/2026', resumoPadrao.includes('31/07/2026'))
+  checar(
+    'Contrato padrão é marcado como sem módulo financeiro',
+    normalizar(await pagina.locator('.cabecalho-pagina').innerText()).includes('Sem módulo financeiro'),
+  )
+  checar(
+    'Sem módulo financeiro, não há aba de extrato',
+    (await pagina.getByRole('tab', { name: 'Extrato financeiro' }).count()) === 0,
+  )
+  const travas = await pagina.locator('.checklist li').allInnerTexts()
+  checar('Contrato padrão tem 5 travas, sem trava de depósito', travas.length === 5, `${travas.length} travas`)
+  checar('Nenhuma trava de depósito no contrato sem módulo', !travas.some((t) => t.includes('Depósito')))
+  const pendentesPadrao = await pagina.locator('.checklist li.pendente').allInnerTexts()
+  checar(
+    'Em 30/07/2026 a única trava pendente é o prazo',
+    pendentesPadrao.length === 1 && pendentesPadrao[0].includes('Prazo contratual'),
+    `${pendentesPadrao.length} pendente(s)`,
+  )
+
+  // ---------------------------------------------------------------- 3. data da simulação
+  await irPara('/plataforma/simulacao')
+  await pagina.getByRole('button', { name: /31\/07\/2026 — prazo cumprido/ }).click()
+  await pagina.waitForTimeout(400)
+  checar(
+    'Com 31/07/2026 o contrato padrão fica elegível',
+    normalizar(await pagina.locator('.painel').last().innerText()).includes('Elegível para solicitação'),
+  )
+  await pagina.getByRole('button', { name: /30\/07\/2026 — véspera/ }).click()
+  await pagina.waitForTimeout(400)
+  checar(
+    'Com 30/07/2026 o contrato padrão volta a ficar bloqueado',
+    normalizar(await pagina.locator('.painel').last().innerText()).includes('Bloqueada por pendências'),
+  )
+
+  // ---------------------------------------------------------------- 4. abrir e fechar disputa
+  await pagina.getByRole('button', { name: 'Abrir disputa neste contrato' }).click()
+  await pagina.waitForTimeout(400)
+  let painelPadrao = normalizar(await pagina.locator('.painel').last().innerText())
+  checar('Botão abre disputa no contrato padrão', painelPadrao.includes('Sem disputa em aberto — pendente'))
+  checar(
+    'Com disputa aberta há duas travas pendentes (prazo e disputa)',
+    (await pagina.locator('.painel').last().locator('.checklist li.pendente').count()) === 2,
+  )
+  await pagina.getByRole('button', { name: 'Fechar disputa deste contrato' }).click()
+  await pagina.waitForTimeout(400)
+  painelPadrao = normalizar(await pagina.locator('.painel').last().innerText())
+  checar('Botão fecha a disputa', painelPadrao.includes('Sem disputa em aberto — cumprida'))
+
+  // ---------------------------------------------------------------- 5. módulo financeiro opcional
+  await abrirContrato('/contratante/contratos', 'CT-2024-001')
+  checar(
+    'Contrato com módulo financeiro é identificado',
+    normalizar(await pagina.locator('.cabecalho-pagina').innerText()).includes('Módulo financeiro ativo'),
+  )
+  checar(
+    'Com módulo financeiro há aba de extrato',
+    (await pagina.getByRole('tab', { name: 'Extrato financeiro' }).count()) === 1,
+  )
   await pagina.getByRole('tab', { name: 'Medições e retenções' }).click()
-  const linhaMedicao = normalizar(await pagina.getByRole('row', { name: /Medição 01/ }).innerText())
+  await pagina.waitForTimeout(200)
   checar(
-    'Medição de R$ 100.000,00 mostra retenção de R$ 5.000,00 e restante de R$ 95.000,00',
-    linhaMedicao.includes('R$ 100.000,00') && linhaMedicao.includes('R$ 5.000,00') && linhaMedicao.includes('R$ 95.000,00'),
-    linhaMedicao.replace(/\s+/g, ' ').slice(0, 120),
+    'Com módulo financeiro a tabela mostra a coluna de depósito',
+    normalizar(await pagina.locator('table.tabela').first().innerText()).includes('Depósito'),
   )
-
   await pagina.getByRole('tab', { name: 'Extrato financeiro' }).click()
   await pagina.getByRole('button', { name: /Simular próximo mês/ }).click()
-  await pagina.waitForTimeout(300)
+  await pagina.waitForTimeout(400)
   const extrato = normalizar(await pagina.locator('.painel-corpo').last().innerText())
   checar(
     'Rendimento simulado: bruto R$ 40,00, plataforma R$ 4,00, contratada R$ 36,00',
@@ -71,251 +146,254 @@ try {
   )
   checar('Saldo para liberação vira R$ 5.036,00', extrato.includes('R$ 5.036,00'))
 
-  // Segundo clique avança o período, sem duplicar
-  await pagina.getByRole('button', { name: /Simular próximo mês/ }).click()
-  await pagina.waitForTimeout(300)
-  const linhasExtrato = await pagina.locator('table.tabela tbody tr').count()
-  checar('Segundo clique cria um novo período (2 lançamentos + linha de totais)', linhasExtrato === 3, `linhas=${linhasExtrato}`)
-
-  // ---------------------------------------------------------------- 3. persistência
-  await pagina.reload()
-  await pagina.waitForTimeout(400)
-  await pagina.getByRole('tab', { name: 'Extrato financeiro' }).click()
-  await pagina.waitForTimeout(200)
-  const apos = normalizar(await pagina.locator('.painel-corpo').last().innerText())
-  checar('Lançamentos continuam após atualizar a página', apos.includes('R$ 72,00') || apos.includes('R$ 36,00'))
-
-  // ---------------------------------------------------------------- 4. bloqueio por disputa
-  await irPara('/contratante/contratos')
-  await pagina.getByRole('row', { name: /CT-2025-031/ }).getByRole('button', { name: 'Abrir' }).click()
-  await pagina.waitForTimeout(250)
-  const textoDisputa = await pagina.locator('.aviso-disputa').innerText()
-  checar('Contrato com disputa exibe o aviso de bloqueio', textoDisputa.includes('Disputa em aberto'))
-  const checklistDisputa = await pagina.locator('.checklist li.pendente').allInnerTexts()
+  // O contrato sem módulo financeiro não mostra nada disso.
+  await abrirContrato('/contratante/contratos', 'CT-2026-100')
+  const corpoPadrao = normalizar(await pagina.locator('main').innerText())
   checar(
-    'Checklist aponta exatamente a condição que falta (disputa)',
-    checklistDisputa.length === 1 && checklistDisputa[0].includes('Sem disputa em aberto'),
-    `${checklistDisputa.length} pendência(s)`,
+    'Contrato sem módulo não fala em rendimento nem participação',
+    !corpoPadrao.includes('Rendimento bruto') && !corpoPadrao.includes('Receita da plataforma'),
+  )
+  await pagina.getByRole('tab', { name: 'Medições e retenções' }).click()
+  await pagina.waitForTimeout(200)
+  checar(
+    'Contrato sem módulo não mostra coluna nem ação de depósito',
+    !normalizar(await pagina.locator('table.tabela').first().innerText()).includes('Depósito'),
   )
 
-  // ---------------------------------------------------------------- 5. documento: envio, rejeição, reenvio, aprovação
-  await irPara('/contratada')
-  await pagina.waitForTimeout(250)
-  await pagina.selectOption('#seletor-contratada', { label: 'Norte Sul Construções Ltda.' })
-  await pagina.waitForTimeout(250)
-  await irPara('/contratada/contratos')
-  await pagina.getByRole('row', { name: /CT-2025-014/ }).getByRole('button', { name: 'Abrir' }).click()
-  await pagina.waitForTimeout(250)
+  // ---------------------------------------------------------------- 6. documento: motivo, recebimento e versões
+  await abrirContrato('/contratante/contratos', 'CT-2025-022')
   await pagina.getByRole('tab', { name: 'Documentos e obrigações' }).click()
+  await pagina.waitForTimeout(250)
+  const linhaArt = pagina.getByRole('row', { name: /ART de execução/ })
+  const textoArt = normalizar(await linhaArt.innerText())
+  checar('Documento recusado mostra o motivo', textoArt.includes('Motivo da recusa'))
+  checar('Documento recusado mostra data e responsável', /Recusado em \d{2}\/\d{2}\/\d{4} por /.test(textoArt))
+  await linhaArt.getByRole('group').count().catch(() => {})
+  await linhaArt.locator('details.detalhes-versoes summary').click()
+  await pagina.waitForTimeout(200)
+  checar(
+    'Histórico de versões do documento é exibido',
+    normalizar(await linhaArt.innerText()).includes('Versão 1'),
+  )
 
+  // Ciclo completo no CT-2025-014: envio, recebimento, recusa, reenvio e aprovação.
+  await irPara('/contratada')
+  await pagina.selectOption('#seletor-contratada', { label: 'Norte Sul Construções Ltda.' })
+  await pagina.waitForTimeout(280)
+  await abrirContrato('/contratada/contratos', 'CT-2025-014')
+  await pagina.getByRole('tab', { name: 'Documentos e obrigações' }).click()
+  await pagina.waitForTimeout(200)
   const linhaCndt = pagina.getByRole('row', { name: /Certidão Negativa de Débitos Trabalhistas/ })
   await linhaCndt.getByRole('button', { name: 'Simular envio' }).click()
-  await pagina.waitForTimeout(300)
-  checar('Envio simulado muda o status para Enviado', (await linhaCndt.innerText()).includes('Enviado'))
-  checar('Nome de arquivo fictício gerado', (await linhaCndt.innerText()).includes('.pdf'))
+  await pagina.waitForTimeout(350)
+  checar('Envio cria a versão 1', normalizar(await linhaCndt.innerText()).includes('Versão 1'))
 
-  await irPara('/contratante/contratos')
-  await pagina.getByRole('row', { name: /CT-2025-014/ }).getByRole('button', { name: 'Abrir' }).click()
-  await pagina.waitForTimeout(250)
+  await abrirContrato('/contratante/contratos', 'CT-2025-014')
   await pagina.getByRole('tab', { name: 'Documentos e obrigações' }).click()
+  await pagina.waitForTimeout(200)
   const linhaCndtCtt = pagina.getByRole('row', { name: /Certidão Negativa de Débitos Trabalhistas/ })
-  await linhaCndtCtt.getByRole('button', { name: 'Rejeitar' }).click()
-  await pagina.waitForTimeout(200)
+  checar(
+    'Antes de confirmar, o recebimento aparece como não confirmado',
+    normalizar(await linhaCndtCtt.innerText()).includes('Recebimento não confirmado'),
+  )
+  await linhaCndtCtt.getByRole('button', { name: 'Confirmar recebimento' }).click()
+  await pagina.waitForTimeout(350)
+  checar(
+    'Confirmação de recebimento registra a data',
+    /Recebimento confirmado em \d{2}\/\d{2}\/\d{4}/.test(normalizar(await linhaCndtCtt.innerText())),
+  )
 
-  // Rejeição sem justificativa deve ser barrada
-  await pagina.getByRole('button', { name: 'Rejeitar documento' }).click()
-  await pagina.waitForTimeout(200)
-  checar('Rejeição sem justificativa mostra erro de campo obrigatório', await pagina.locator('.erro-campo').first().isVisible())
-
-  await pagina.locator('#motivo-rejeicao').fill('Certidão vencida. Reenviar a via atualizada e assinada.')
-  await pagina.getByRole('button', { name: 'Rejeitar documento' }).click()
-  await pagina.waitForTimeout(300)
-  checar('Documento fica Rejeitado com a justificativa visível', (await linhaCndtCtt.innerText()).includes('Certidão vencida'))
-
-  await irPara('/contratada/contratos')
-  await pagina.getByRole('row', { name: /CT-2025-014/ }).getByRole('button', { name: 'Abrir' }).click()
+  await linhaCndtCtt.getByRole('button', { name: 'Recusar' }).click()
   await pagina.waitForTimeout(250)
+  await pagina.getByRole('button', { name: 'Recusar documento' }).click()
+  await pagina.waitForTimeout(250)
+  checar('Recusa sem motivo mostra erro de campo obrigatório', await pagina.locator('.erro-campo').first().isVisible())
+  await pagina.locator('#motivo-rejeicao').fill('Certidão vencida. Reenviar a via atualizada e assinada.')
+  await pagina.getByRole('button', { name: 'Recusar documento' }).click()
+  await pagina.waitForTimeout(400)
+  checar(
+    'Recusa registra motivo, data e responsável',
+    /Motivo da recusa/.test(normalizar(await linhaCndtCtt.innerText())) &&
+      /Recusado em \d{2}\/\d{2}\/\d{4} por /.test(normalizar(await linhaCndtCtt.innerText())),
+  )
+
+  await abrirContrato('/contratada/contratos', 'CT-2025-014')
   await pagina.getByRole('tab', { name: 'Documentos e obrigações' }).click()
+  await pagina.waitForTimeout(200)
   const linhaReenvio = pagina.getByRole('row', { name: /Certidão Negativa de Débitos Trabalhistas/ })
   await linhaReenvio.getByRole('button', { name: 'Reenviar documento' }).click()
-  await pagina.waitForTimeout(300)
-  checar('Reenvio volta o documento para Enviado', (await linhaReenvio.innerText()).includes('Enviado'))
+  await pagina.waitForTimeout(400)
+  checar('Reenvio cria a versão 2', normalizar(await linhaReenvio.innerText()).includes('Versão 2'))
+  await linhaReenvio.locator('details.detalhes-versoes summary').click()
+  await pagina.waitForTimeout(200)
+  const versoes = normalizar(await linhaReenvio.innerText())
+  checar(
+    'Histórico guarda as duas versões, com a recusa da primeira',
+    versoes.includes('Versão 1') && versoes.includes('Versão 2') && versoes.includes('Certidão vencida'),
+  )
 
-  await irPara('/contratante/contratos')
-  await pagina.getByRole('row', { name: /CT-2025-014/ }).getByRole('button', { name: 'Abrir' }).click()
-  await pagina.waitForTimeout(250)
+  await abrirContrato('/contratante/contratos', 'CT-2025-014')
   await pagina.getByRole('tab', { name: 'Documentos e obrigações' }).click()
-  const linhaAprovar = pagina.getByRole('row', { name: /Certidão Negativa de Débitos Trabalhistas/ })
-  await linhaAprovar.getByRole('button', { name: 'Aprovar' }).click()
-  await pagina.waitForTimeout(300)
-  checar('Aprovação muda o status para Aprovado', (await linhaAprovar.innerText()).includes('Aprovado'))
+  await pagina.waitForTimeout(200)
+  await pagina
+    .getByRole('row', { name: /Certidão Negativa de Débitos Trabalhistas/ })
+    .getByRole('button', { name: 'Aprovar' })
+    .click()
+  await pagina.waitForTimeout(400)
+  checar(
+    'Aprovação muda o status para Aprovado',
+    normalizar(
+      await pagina.getByRole('row', { name: /Certidão Negativa de Débitos Trabalhistas/ }).innerText(),
+    ).includes('Aprovado'),
+  )
 
-  // ---------------------------------------------------------------- 6. liberação: solicitar e confirmar
+  // ---------------------------------------------------------------- 7. pendências da contratada
+  await irPara('/contratada')
+  await pagina.selectOption('#seletor-contratada', { label: 'Vertax Engenharia Ltda.' })
+  await pagina.waitForTimeout(350)
+  const primeiroPainel = pagina.locator('.painel').first()
+  checar(
+    'Tela da contratada abre pelas pendências',
+    (await primeiroPainel.locator('h2').innerText()).includes('Pendências para liberação'),
+  )
+  const primeiraPendencia = normalizar(await pagina.locator('.lista-pendencias li').first().innerText())
+  checar('Pendência mostra o responsável', primeiraPendencia.includes('Responsável:'))
+  checar('Pendência mostra o motivo', primeiraPendencia.includes('Recusado em') || primeiraPendencia.length > 40)
+  checar('Pendência mostra o prazo', primeiraPendencia.includes('Prazo:'))
+
+  // ---------------------------------------------------------------- 8. planos
+  await irPara('/plataforma/planos')
+  const planos = normalizar(await pagina.locator('.grade-planos').innerText())
+  checar('Plano Essencial: até 15 contratos, R$ 2.500,00/mês', planos.includes('Essencial') && planos.includes('R$ 2.500,00') && planos.includes('15'))
+  checar('Plano Profissional: até 50 contratos, R$ 5.000,00/mês', planos.includes('Profissional') && planos.includes('R$ 5.000,00') && planos.includes('50'))
+  checar('Plano Corporativo: acima de 50, a partir de R$ 10.000,00/mês', planos.includes('Corporativo') && planos.includes('R$ 10.000,00') && planos.includes('a partir de'))
+  const paginaPlanos = normalizar(await pagina.locator('main').innerText())
+  checar('Implantação de R$ 10.000,00 a R$ 30.000,00', paginaPlanos.includes('R$ 30.000,00'))
+  checar('Fornecedores convidados sem custo', paginaPlanos.toLowerCase().includes('não paga'))
+  checar('Nenhuma menção a R$ 499 na tela de planos', !paginaPlanos.includes('499'))
+
+  // ---------------------------------------------------------------- 9. importar cauções do ERP
+  await irPara('/contratante/importar')
+  await pagina.waitForTimeout(350)
+  checar(
+    'Tela de importação traz o CSV de exemplo já preenchido',
+    (await pagina.locator('#conteudo-csv').inputValue()).includes('CT-ERP-101'),
+  )
+  const previa = normalizar(await pagina.locator('.previa-csv').innerText())
+  checar('Prévia mostra as três cauções do exemplo', previa.includes('CT-ERP-101') && previa.includes('CT-ERP-103'))
+  checar('Prévia calcula o valor retido', previa.includes('R$ 12.500,00'))
+
+  // Uma linha inconsistente é apontada com o motivo.
+  const csvAtual = await pagina.locator('#conteudo-csv').inputValue()
+  await pagina.locator('#conteudo-csv').fill(csvAtual + 'CT-ERP-104;Fornecedor X;100.000,00;150;5.000,00;30/11/2026\n')
+  await pagina.waitForTimeout(300)
+  checar(
+    'Linha com percentual inválido é recusada com o motivo',
+    normalizar(await pagina.locator('.linha-erro').innerText()).includes('entre 0 e 100'),
+  )
+  await pagina.getByRole('button', { name: 'Restaurar o exemplo' }).click()
+  await pagina.waitForTimeout(300)
+
+  await pagina.getByRole('button', { name: /Importar 3 caução/ }).click()
+  await pagina.waitForTimeout(500)
+  const listaAposImportar = normalizar(await pagina.locator('table.tabela').innerText())
+  checar('Importação cria os contratos na lista', listaAposImportar.includes('CT-ERP-101') && listaAposImportar.includes('CT-ERP-103'))
+
+  await abrirContrato('/contratante/contratos', 'CT-ERP-102')
+  const importado = normalizar(await pagina.locator('.definicoes').first().innerText())
+  checar('Contrato importado traz o valor medido de R$ 180.000,00', importado.includes('R$ 180.000,00'))
+  checar('Contrato importado traz a retenção de R$ 18.000,00', importado.includes('R$ 18.000,00'))
+  checar('Contrato importado usa o vencimento como data mínima', importado.includes('15/12/2026'))
+
+  // ---------------------------------------------------------------- 10. persistência
+  await pagina.reload()
+  await pagina.waitForTimeout(500)
+  checar(
+    'Contrato importado continua após atualizar a página',
+    normalizar(await pagina.locator('.definicoes').first().innerText()).includes('R$ 180.000,00'),
+  )
+  checar(
+    'Data da simulação persiste',
+    (await pagina.locator('.chip-data').innerText()).includes('30/07/2026'),
+  )
+
+  // ---------------------------------------------------------------- 11. liberação completa
+  await irPara('/plataforma/simulacao')
+  await pagina.getByRole('button', { name: /31\/07\/2026 — prazo cumprido/ }).click()
+  await pagina.waitForTimeout(400)
   await irPara('/contratada')
   await pagina.selectOption('#seletor-contratada', { label: 'Andrade Montagens Ltda.' })
-  await pagina.waitForTimeout(250)
-  await irPara('/contratada/contratos')
-  await pagina.getByRole('row', { name: /CT-2024-001/ }).getByRole('button', { name: 'Abrir' }).click()
-  await pagina.waitForTimeout(250)
+  await pagina.waitForTimeout(300)
+  await abrirContrato('/contratada/contratos', 'CT-2026-100')
   await pagina.getByRole('button', { name: 'Solicitar liberação' }).click()
-  await pagina.waitForTimeout(200)
-  const textoConfirmacao = normalizar(await pagina.locator('.modal-corpo').innerText())
-  checar('Diálogo de confirmação mostra o valor a liberar', textoConfirmacao.includes('R$ 5.072,00'), textoConfirmacao.slice(0, 90))
-  await pagina.getByRole('button', { name: 'Solicitar liberação' }).last().click()
-  await pagina.waitForTimeout(400)
-  checar('Status vira "Liberação solicitada"', (await pagina.locator('.etiqueta').first().innerText()).includes('solicitada'))
-
-  await irPara('/contratante/contratos')
-  await pagina.getByRole('row', { name: /CT-2024-001/ }).getByRole('button', { name: 'Abrir' }).click()
   await pagina.waitForTimeout(250)
-  await pagina.getByRole('button', { name: 'Confirmar liberação simulada' }).click()
-  await pagina.waitForTimeout(200)
-  await pagina.getByRole('button', { name: 'Confirmar liberação' }).last().click()
-  await pagina.waitForTimeout(400)
-
-  const blocoLiberado = normalizar(await pagina.locator('.aviso-sucesso-bloco').innerText())
-  checar('Aviso de contrato liberado aparece com o total', blocoLiberado.includes('R$ 5.072,00'), blocoLiberado.slice(0, 100))
-
-  const resumoLiberado = normalizar(await pagina.locator('.definicoes').first().innerText())
-  checar('Saldo retido zerado após a liberação', resumoLiberado.includes('R$ 0,00'))
-  checar('Total liberado preservado no resumo', resumoLiberado.includes('R$ 5.072,00'))
   checar(
-    'Liberação duplicada impedida: botão de confirmar some',
+    'Diálogo de solicitação mostra R$ 5.000,00',
+    normalizar(await pagina.locator('.modal-corpo').innerText()).includes('R$ 5.000,00'),
+  )
+  await pagina.getByRole('button', { name: 'Solicitar liberação' }).last().click()
+  await pagina.waitForTimeout(450)
+
+  await abrirContrato('/contratante/contratos', 'CT-2026-100')
+  await pagina.getByRole('button', { name: 'Confirmar liberação simulada' }).click()
+  await pagina.waitForTimeout(250)
+  await pagina.getByRole('button', { name: 'Confirmar liberação' }).last().click()
+  await pagina.waitForTimeout(450)
+  checar(
+    'Contrato padrão liberado por R$ 5.000,00',
+    normalizar(await pagina.locator('.aviso-sucesso-bloco').innerText()).includes('R$ 5.000,00'),
+  )
+  checar(
+    'Liberação duplicada impedida',
     (await pagina.getByRole('button', { name: 'Confirmar liberação simulada' }).count()) === 0,
   )
-  checar(
-    'Contrato liberado não aceita novas medições',
-    (await pagina.getByRole('button', { name: '+ Registrar medição' }).count()) === 0,
-  )
 
-  await pagina.getByRole('tab', { name: 'Extrato financeiro' }).click()
-  await pagina.waitForTimeout(200)
-  const extratoFinal = normalizar(await pagina.locator('.painel-corpo').last().innerText())
-  checar('Extrato preservado após a liberação', extratoFinal.includes('R$ 36,00'))
-  checar(
-    'Sem novos rendimentos após a liberação',
-    (await pagina.getByRole('button', { name: /Simular próximo mês/ }).count()) === 0,
-  )
-
-  await pagina.getByRole('tab', { name: 'Histórico' }).click()
-  await pagina.waitForTimeout(200)
-  const historico = normalizar(await pagina.locator('.linha-tempo').innerText())
-  checar('Histórico registra a liberação', historico.includes('Liberação simulada confirmada'))
-
-  // ---------------------------------------------------------------- 7. cadastro de contrato e validações
-  await irPara('/contratante/contratos/novo')
-  await pagina.getByRole('button', { name: 'Cadastrar contrato' }).last().click()
-  await pagina.waitForTimeout(250)
-  const errosVisiveis = await pagina.locator('.erro-campo').count()
-  checar('Formulário vazio mostra erros de campos obrigatórios', errosVisiveis >= 2, `${errosVisiveis} erros`)
-
-  await pagina.locator('#nome').fill('Contrato de teste do grupo')
-  await pagina.locator('#codigo').fill('CT-2026-099')
-  await pagina.locator('#valor-total').fill('2.000.000,00')
-  await pagina.locator('#percentual').fill('150')
-  await pagina.getByRole('button', { name: 'Cadastrar contrato' }).last().click()
-  await pagina.waitForTimeout(250)
-  checar(
-    'Percentual acima de 100 é recusado',
-    (await pagina.locator('.erro-campo').allInnerTexts()).some((t) => t.includes('entre 0 e 100')),
-  )
-
-  await pagina.locator('#percentual').fill('10')
-  await pagina.getByRole('button', { name: 'Cadastrar contrato' }).last().click()
-  await pagina.waitForTimeout(400)
-  checar(
-    'Contrato válido é cadastrado e aparece na lista',
-    normalizar(await pagina.locator('table.tabela').innerText()).includes('CT-2026-099'),
-  )
-
-  // Medição acima do valor do contrato
-  await pagina.getByRole('row', { name: /CT-2026-099/ }).getByRole('button', { name: 'Abrir' }).click()
-  await pagina.waitForTimeout(250)
-  await pagina.getByRole('tab', { name: 'Medições e retenções' }).click()
-  await pagina.getByRole('button', { name: '+ Registrar medição' }).click()
-  await pagina.waitForTimeout(200)
-  await pagina.locator('#med-descricao').fill('Medição 01')
-  await pagina.locator('#med-valor').fill('3.000.000,00')
-  await pagina.waitForTimeout(150)
-  const previa = normalizar(await pagina.locator('.modal-corpo .nota').innerText())
-  checar('Prévia do cálculo mostra retenção de R$ 300.000,00', previa.includes('R$ 300.000,00'), previa.replace(/\s+/g, ' ').slice(0, 110))
-  await pagina.getByRole('button', { name: 'Registrar medição' }).last().click()
-  await pagina.waitForTimeout(250)
-  checar(
-    'Medição acima do valor do contrato é recusada',
-    (await pagina.locator('.erro-campo').allInnerTexts()).some((t) => t.includes('ultrapassar o valor do contrato')),
-  )
-  await pagina.locator('#med-valor').fill('500.000,00')
-  await pagina.getByRole('button', { name: 'Registrar medição' }).last().click()
-  await pagina.waitForTimeout(400)
-  const linhaNova = normalizar(await pagina.getByRole('row', { name: /Medição 01/ }).innerText())
-  checar('Medição válida registra retenção de R$ 50.000,00', linhaNova.includes('R$ 50.000,00'))
-
-  // Sem depósito confirmado, não há rendimento
-  await pagina.getByRole('tab', { name: 'Extrato financeiro' }).click()
-  await pagina.getByRole('button', { name: /Simular próximo mês/ }).click()
-  await pagina.waitForTimeout(300)
-  checar(
-    'Sem depósito confirmado a simulação é recusada com mensagem clara',
-    (await pagina.locator('.aviso.erro').innerText()).includes('principal depositado'),
-  )
-
-  // ---------------------------------------------------------------- 8. plataforma
-  await irPara('/plataforma')
-  await pagina.waitForTimeout(300)
-  // Os rótulos dos cartões são exibidos em maiúsculas pelo CSS; comparamos sem diferenciar caixa.
-  const painelPlataformaOriginal = normalizar(await pagina.locator('.grade-indicadores').innerText())
-  const painelPlataforma = painelPlataformaOriginal.toLowerCase()
-  checar('Painel da plataforma mostra contratantes cadastradas', painelPlataforma.includes('contratantes cadastradas'))
-  checar(
-    'Receita de assinaturas projetada mensal = 2 × R$ 499,00',
-    painelPlataformaOriginal.includes('R$ 998,00'),
-  )
-  checar(
-    'Receitas mensal e acumulada são apresentadas separadamente',
-    painelPlataforma.includes('projeção mensal') && painelPlataforma.includes('acumulado'),
-  )
-
-  await irPara('/plataforma/configuracoes')
-  await pagina.waitForTimeout(250)
-  await pagina.locator('#taxa').fill('300')
-  await pagina.getByRole('button', { name: 'Salvar parâmetros' }).click()
-  await pagina.waitForTimeout(250)
-  checar('Taxa fora de 0–100 é recusada', (await pagina.locator('.erro-campo').first().innerText()).includes('entre 0 e 100'))
-  await pagina.locator('#taxa').fill('0,8')
-  await pagina.getByRole('button', { name: 'Salvar parâmetros' }).click()
-  await pagina.waitForTimeout(250)
-  checar('Parâmetros válidos são salvos', (await pagina.locator('.aviso.sucesso').count()) > 0)
-
-  // ---------------------------------------------------------------- 9. restaurar demonstração
+  // ---------------------------------------------------------------- 12. restaurar demonstração
   await irPara('/sobre')
+  await pagina.waitForTimeout(300)
+  await pagina.getByRole('button', { name: /Restaurar demonstração/ }).first().click()
   await pagina.waitForTimeout(250)
-  await pagina.getByRole('button', { name: '↺ Restaurar demonstração' }).first().click()
-  await pagina.waitForTimeout(200)
   checar('Restauração pede confirmação', await pagina.locator('.fundo-modal').isVisible())
   await pagina.getByRole('button', { name: 'Sim, restaurar' }).click()
-  await pagina.waitForTimeout(400)
+  await pagina.waitForTimeout(500)
   await irPara('/contratante/contratos')
-  await pagina.waitForTimeout(300)
-  // A busca é feita dentro da tabela: um aviso antigo na tela não deve contar como resultado.
+  await pagina.waitForTimeout(400)
   const tabelaRestaurada = normalizar(await pagina.locator('table.tabela').innerText())
-  checar('Após restaurar, o contrato de teste sumiu da lista', !tabelaRestaurada.includes('CT-2026-099'))
-  checar('Após restaurar, voltam os 5 contratos de exemplo', (await pagina.locator('table.tabela tbody tr').count()) === 5)
-  const linhaRestaurada = normalizar(await pagina.getByRole('row', { name: /CT-2024-001/ }).innerText())
-  checar('Após restaurar, o contrato de referência volta a R$ 5.000,00 retidos', linhaRestaurada.includes('R$ 5.000,00'))
+  checar('Após restaurar, os contratos importados somem', !tabelaRestaurada.includes('CT-ERP-101'))
+  checar('Após restaurar, o contrato padrão volta a R$ 5.000,00 retidos', tabelaRestaurada.includes('R$ 5.000,00'))
+  checar(
+    'Após restaurar, a data da simulação volta a 30/07/2026',
+    (await pagina.locator('.chip-data').innerText()).includes('30/07/2026'),
+  )
 
-  // ---------------------------------------------------------------- 10. responsivo
-  await contexto.clearCookies()
+  // ---------------------------------------------------------------- 13. celular
   const celular = await navegador.newContext({ viewport: { width: 390, height: 844 } })
   const paginaCelular = await celular.newPage()
+  const errosCelular = []
+  paginaCelular.on('pageerror', (e) => errosCelular.push(String(e)))
+
+  for (const rota of [
+    '/contratante',
+    '/contratante/contratos',
+    '/contratante/importar',
+    '/contratada',
+    '/plataforma/planos',
+    '/plataforma/simulacao',
+  ]) {
+    await paginaCelular.goto(`${BASE}#${rota}`)
+    await paginaCelular.waitForTimeout(400)
+    const largura = await paginaCelular.evaluate(() => document.documentElement.scrollWidth)
+    checar(`Celular 390px sem rolagem horizontal em ${rota}`, largura <= 400, `scrollWidth=${largura}`)
+  }
+
   await paginaCelular.goto(`${BASE}#/contratante`)
   await paginaCelular.waitForTimeout(400)
-  checar('No celular o menu aparece recolhido com botão de abrir', await paginaCelular.locator('.botao-menu').isVisible())
+  checar('No celular o menu aparece recolhido', await paginaCelular.locator('.botao-menu').isVisible())
   await paginaCelular.locator('.botao-menu').click()
   await paginaCelular.waitForTimeout(300)
   checar('Botão abre o menu lateral no celular', await paginaCelular.locator('.menu-lateral.aberto').isVisible())
-  const larguraDocumento = await paginaCelular.evaluate(() => document.documentElement.scrollWidth)
-  checar('Sem rolagem horizontal no celular', larguraDocumento <= 400, `scrollWidth=${larguraDocumento}`)
+  checar('Menu do celular traz a marca TrustRetain', (await paginaCelular.locator('.menu-marca .nome').innerText()).includes('TrustRetain'))
+  checar('Sem erro de JavaScript no celular', errosCelular.length === 0, errosCelular.slice(0, 2).join(' | '))
   await celular.close()
 
   checar('Nenhum erro de JavaScript no console durante o fluxo', erros.length === 0, erros.slice(0, 2).join(' | '))

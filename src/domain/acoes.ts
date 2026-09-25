@@ -1,20 +1,28 @@
 // Ações da demonstração: funções puras que recebem o estado e devolvem um novo estado.
-// Nenhuma delas conhece React. Toda regra de bloqueio vive aqui e é revalidada no momento da ação.
+// Nenhuma delas conhece React. Toda regra de bloqueio vive aqui e é revalidada no
+// momento da ação. As datas gravadas usam a DATA DE SIMULAÇÃO do estado.
 
-import { calcularRendimento, calcularResumoContrato, disputaAberta } from './calculos'
-import { formatarData, hojeISO, periodoAtual, proximoPeriodo } from './datas'
+import { RESPONSAVEL_POR_PERFIL } from './atores'
+import {
+  calcularDataMinimaLiberacao,
+  calcularRendimento,
+  calcularResumoContrato,
+  disputaAberta,
+} from './calculos'
+import { formatarData, proximoPeriodo } from './datas'
 import { avaliarLiberacaoDoEstado } from './elegibilidade'
 import { formatarMoeda } from './money'
 import type {
   Configuracoes,
   Contrato,
   Disputa,
-  Documento,
   EstadoDemo,
   EventoHistorico,
+  IdPlano,
   Medicao,
   Perfil,
   TipoEvento,
+  VersaoDocumento,
 } from './types'
 
 export type ResultadoAcao =
@@ -27,8 +35,12 @@ function novoId(prefixo: string): string {
   return `${prefixo}-${Date.now().toString(36)}-${contadorId.toString(36)}`
 }
 
-function agora(): string {
-  return new Date().toISOString()
+/** Momento do registro, ancorado na data de simulação. */
+function carimbo(estado: EstadoDemo): string {
+  const agora = new Date()
+  const hora = String(agora.getHours()).padStart(2, '0')
+  const minuto = String(agora.getMinutes()).padStart(2, '0')
+  return `${estado.dataSimulacao}T${hora}:${minuto}:00`
 }
 
 function registrar(
@@ -44,7 +56,8 @@ function registrar(
     tipo,
     descricao,
     perfil,
-    data: agora(),
+    autor: RESPONSAVEL_POR_PERFIL[perfil],
+    data: carimbo(estado),
   }
   return [evento, ...estado.historico]
 }
@@ -60,6 +73,19 @@ function bloqueioPorLiberacao(contrato: Contrato): string | null {
     : null
 }
 
+// ---------------------------------------------------------------- data de simulação
+
+export function definirDataSimulacao(estado: EstadoDemo, data: string): ResultadoAcao {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(data)) {
+    return { ok: false, mensagem: 'Informe uma data válida no formato dia/mês/ano.' }
+  }
+  return {
+    ok: true,
+    estado: { ...estado, dataSimulacao: data },
+    mensagem: `Data da simulação ajustada para ${formatarData(data)}.`,
+  }
+}
+
 // ---------------------------------------------------------------- contratos
 
 export interface NovoContrato {
@@ -73,6 +99,9 @@ export interface NovoContrato {
   dataTermino: string
   dataMinimaLiberacao: string
   condicoesLiberacao: string
+  moduloFinanceiroAtivo: boolean
+  dataConclusao?: string
+  prazoDiasCorridos?: number
 }
 
 export function criarContrato(estado: EstadoDemo, dados: NovoContrato): ResultadoAcao {
@@ -86,10 +115,13 @@ export function criarContrato(estado: EstadoDemo, dados: NovoContrato): Resultad
     percentualRetencao: dados.percentualRetencao,
     dataInicio: dados.dataInicio,
     dataTermino: dados.dataTermino,
+    moduloFinanceiroAtivo: dados.moduloFinanceiroAtivo,
+    dataConclusao: dados.dataConclusao,
+    prazoDiasCorridos: dados.prazoDiasCorridos,
     dataMinimaLiberacao: dados.dataMinimaLiberacao,
     condicoesLiberacao: dados.condicoesLiberacao.trim(),
     entregaAceita: false,
-    criadoEm: agora(),
+    criadoEm: carimbo(estado),
   }
   const comContrato: EstadoDemo = { ...estado, contratos: [...estado.contratos, contrato] }
   return {
@@ -100,11 +132,121 @@ export function criarContrato(estado: EstadoDemo, dados: NovoContrato): Resultad
         comContrato,
         contrato.id,
         'contrato_criado',
-        `Contrato ${contrato.codigo} cadastrado com retenção de ${contrato.percentualRetencao}%.`,
+        `Contrato ${contrato.codigo} cadastrado com retenção de ${contrato.percentualRetencao}%${contrato.moduloFinanceiroAtivo ? ' e módulo financeiro ativo' : ', sem módulo financeiro'}.`,
         'contratante',
       ),
     },
     mensagem: `Contrato ${contrato.codigo} cadastrado com sucesso.`,
+  }
+}
+
+// ---------------------------------------------------------------- importação de cauções (ERP)
+
+export interface LinhaCaucao {
+  contrato: string
+  fornecedor: string
+  valorMedidoCents: number
+  percentual: number
+  valorRetidoCents: number
+  vencimento: string
+}
+
+/**
+ * Cria um contrato por linha de caução importada do ERP.
+ * Cada linha vira um contrato com uma medição já registrada no valor medido.
+ * Fornecedores ainda não cadastrados são criados como contratadas convidadas.
+ */
+export function importarCaucoes(
+  estado: EstadoDemo,
+  linhas: LinhaCaucao[],
+  opcoes: { contratanteId: string; moduloFinanceiroAtivo: boolean },
+): ResultadoAcao {
+  if (linhas.length === 0) return { ok: false, mensagem: 'Nenhuma linha válida para importar.' }
+
+  const contratante = estado.contratantes.find((c) => c.id === opcoes.contratanteId)
+  if (!contratante) return { ok: false, mensagem: 'Selecione a contratante da importação.' }
+
+  const duplicados = linhas.filter((l) =>
+    estado.contratos.some((c) => c.codigo.toLowerCase() === l.contrato.trim().toLowerCase()),
+  )
+  if (duplicados.length > 0) {
+    return {
+      ok: false,
+      mensagem: `Já existe contrato com o código ${duplicados.map((d) => d.contrato).join(', ')}. Ajuste o arquivo antes de importar.`,
+    }
+  }
+
+  let novo: EstadoDemo = { ...estado }
+  const contratadas = [...estado.contratadas]
+  const contratos = [...estado.contratos]
+  const medicoes = [...estado.medicoes]
+  let historico = [...estado.historico]
+
+  for (const linha of linhas) {
+    const nomeFornecedor = linha.fornecedor.trim()
+    let contratada = contratadas.find(
+      (c) => c.nome.toLowerCase() === nomeFornecedor.toLowerCase(),
+    )
+    if (!contratada) {
+      contratada = {
+        id: novoId('cd'),
+        nome: nomeFornecedor,
+        cnpj: '—',
+        contato: 'Contato não informado no ERP',
+      }
+      contratadas.push(contratada)
+    }
+
+    const contrato: Contrato = {
+      id: novoId('c'),
+      codigo: linha.contrato.trim(),
+      nome: `Caução importada — ${linha.contrato.trim()}`,
+      contratanteId: contratante.id,
+      contratadaId: contratada.id,
+      valorTotalCents: linha.valorMedidoCents,
+      percentualRetencao: linha.percentual,
+      dataInicio: estado.dataSimulacao,
+      dataTermino: linha.vencimento,
+      moduloFinanceiroAtivo: opcoes.moduloFinanceiroAtivo,
+      dataMinimaLiberacao: linha.vencimento,
+      condicoesLiberacao:
+        'Caução importada do ERP. Liberação após aceite da entrega, aprovação dos documentos obrigatórios e cumprimento do prazo.',
+      entregaAceita: false,
+      origem: 'erp',
+      criadoEm: carimbo(estado),
+    }
+    contratos.push(contrato)
+
+    medicoes.push({
+      id: novoId('m'),
+      contratoId: contrato.id,
+      descricao: 'Medição importada do ERP',
+      data: estado.dataSimulacao,
+      valorCents: linha.valorMedidoCents,
+      retencaoCents: linha.valorRetidoCents,
+      // Sem módulo financeiro a retenção já compõe o saldo; com módulo, aguarda depósito.
+      depositoConfirmado: false,
+    })
+
+    historico = [
+      {
+        id: novoId('h'),
+        contratoId: contrato.id,
+        tipo: 'contrato_importado' as TipoEvento,
+        descricao: `Caução importada do ERP: ${formatarMoeda(linha.valorMedidoCents)} medidos, ${linha.percentual}% retidos (${formatarMoeda(linha.valorRetidoCents)}), vencimento em ${formatarData(linha.vencimento)}.`,
+        perfil: 'contratante' as Perfil,
+        autor: RESPONSAVEL_POR_PERFIL.contratante,
+        data: carimbo(estado),
+      },
+      ...historico,
+    ]
+  }
+
+  novo = { ...novo, contratadas, contratos, medicoes, historico }
+  return {
+    ok: true,
+    estado: novo,
+    mensagem: `${linhas.length} caução(ões) importada(s) do ERP.`,
   }
 }
 
@@ -163,11 +305,20 @@ export function confirmarDeposito(estado: EstadoDemo, medicaoId: string): Result
 
   const contrato = acharContrato(estado, medicao.contratoId)
   if (!contrato) return { ok: false, mensagem: 'Contrato não encontrado.' }
+  if (!contrato.moduloFinanceiroAtivo) {
+    return {
+      ok: false,
+      mensagem:
+        'Este contrato não tem módulo financeiro. A retenção já compõe o saldo retido, sem etapa de depósito.',
+    }
+  }
   const bloqueio = bloqueioPorLiberacao(contrato)
   if (bloqueio) return { ok: false, mensagem: bloqueio }
 
   const medicoes = estado.medicoes.map((m) =>
-    m.id === medicaoId ? { ...m, depositoConfirmado: true, depositoConfirmadoEm: hojeISO() } : m,
+    m.id === medicaoId
+      ? { ...m, depositoConfirmado: true, depositoConfirmadoEm: estado.dataSimulacao }
+      : m,
   )
   const novo: EstadoDemo = { ...estado, medicoes }
   return {
@@ -178,17 +329,17 @@ export function confirmarDeposito(estado: EstadoDemo, medicaoId: string): Result
         novo,
         medicao.contratoId,
         'deposito_confirmado',
-        `Depósito simulado de ${formatarMoeda(medicao.retencaoCents)} confirmado para a medição "${medicao.descricao}".`,
+        `Depósito de ${formatarMoeda(medicao.retencaoCents)} confirmado para a medição "${medicao.descricao}".`,
         'contratante',
       ),
     },
-    mensagem: `Depósito simulado de ${formatarMoeda(medicao.retencaoCents)} confirmado.`,
+    mensagem: `Depósito de ${formatarMoeda(medicao.retencaoCents)} confirmado.`,
   }
 }
 
 // ---------------------------------------------------------------- documentos
 
-function nomeArquivoFicticio(nomeDocumento: string): string {
+function nomeArquivoFicticio(nomeDocumento: string, versao: number, data: string): string {
   const base = nomeDocumento
     .normalize('NFD')
     .replace(/[̀-ͯ]/g, '')
@@ -196,7 +347,7 @@ function nomeArquivoFicticio(nomeDocumento: string): string {
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-|-$/g, '')
     .slice(0, 40)
-  return `${base}-${hojeISO().replace(/-/g, '')}.pdf`
+  return `${base}-v${versao}-${data.replace(/-/g, '')}.pdf`
 }
 
 export function enviarDocumento(estado: EstadoDemo, documentoId: string): ResultadoAcao {
@@ -213,17 +364,34 @@ export function enviarDocumento(estado: EstadoDemo, documentoId: string): Result
   if (bloqueio) return { ok: false, mensagem: bloqueio }
 
   const reenvio = documento.status === 'rejeitado'
-  const arquivoNome = nomeArquivoFicticio(documento.nome)
+  const versao = documento.versaoAtual + 1
+  const enviadoPor = RESPONSAVEL_POR_PERFIL.contratada
+  const arquivoNome = nomeArquivoFicticio(documento.nome, versao, estado.dataSimulacao)
+
+  const novaVersao: VersaoDocumento = {
+    versao,
+    arquivoNome,
+    enviadoEm: estado.dataSimulacao,
+    enviadoPor,
+    resultado: 'em_analise',
+  }
+
   const documentos = estado.documentos.map((d) =>
     d.id === documentoId
       ? {
           ...d,
           status: 'enviado' as const,
           arquivoNome,
-          enviadoEm: hojeISO(),
+          enviadoEm: estado.dataSimulacao,
+          enviadoPor,
+          // A análise e o recebimento voltam a zero para esta nova versão.
+          recebidoEm: undefined,
+          recebidoPor: undefined,
           analisadoEm: undefined,
-          // A justificativa anterior é preservada no histórico, mas sai do estado atual.
+          analisadoPor: undefined,
           motivoRejeicao: undefined,
+          versaoAtual: versao,
+          versoes: [...d.versoes, novaVersao],
         }
       : d,
   )
@@ -236,11 +404,51 @@ export function enviarDocumento(estado: EstadoDemo, documentoId: string): Result
         novo,
         documento.contratoId,
         'documento_enviado',
-        `${reenvio ? 'Reenvio' : 'Envio'} simulado do documento "${documento.nome}" (${arquivoNome}).`,
+        `${reenvio ? 'Reenvio' : 'Envio'} do documento "${documento.nome}" (versão ${versao}, ${arquivoNome}).`,
         'contratada',
       ),
     },
-    mensagem: `${reenvio ? 'Reenvio' : 'Envio'} simulado concluído: ${arquivoNome}.`,
+    mensagem: `${reenvio ? 'Reenvio' : 'Envio'} concluído: versão ${versao} (${arquivoNome}).`,
+  }
+}
+
+export function confirmarRecebimento(estado: EstadoDemo, documentoId: string): ResultadoAcao {
+  const documento = estado.documentos.find((d) => d.id === documentoId)
+  if (!documento) return { ok: false, mensagem: 'Documento não encontrado.' }
+  if (documento.status !== 'enviado')
+    return { ok: false, mensagem: 'Só é possível confirmar o recebimento de um documento enviado.' }
+  if (documento.recebidoEm)
+    return { ok: false, mensagem: 'O recebimento desta versão já foi confirmado.' }
+
+  const recebidoPor = RESPONSAVEL_POR_PERFIL.contratante
+  const documentos = estado.documentos.map((d) =>
+    d.id === documentoId
+      ? {
+          ...d,
+          recebidoEm: estado.dataSimulacao,
+          recebidoPor,
+          versoes: d.versoes.map((v) =>
+            v.versao === d.versaoAtual
+              ? { ...v, recebidoEm: estado.dataSimulacao, recebidoPor }
+              : v,
+          ),
+        }
+      : d,
+  )
+  const novo: EstadoDemo = { ...estado, documentos }
+  return {
+    ok: true,
+    estado: {
+      ...novo,
+      historico: registrar(
+        novo,
+        documento.contratoId,
+        'documento_recebido',
+        `Recebimento da versão ${documento.versaoAtual} do documento "${documento.nome}" confirmado.`,
+        'contratante',
+      ),
+    },
+    mensagem: `Recebimento confirmado. A contratada passa a ver a data e o responsável pela análise.`,
   }
 }
 
@@ -255,9 +463,31 @@ export function aprovarDocumento(estado: EstadoDemo, documentoId: string): Resul
   const bloqueio = bloqueioPorLiberacao(contrato)
   if (bloqueio) return { ok: false, mensagem: bloqueio }
 
+  const analisadoPor = RESPONSAVEL_POR_PERFIL.contratante
   const documentos = estado.documentos.map((d) =>
     d.id === documentoId
-      ? { ...d, status: 'aprovado' as const, analisadoEm: hojeISO(), motivoRejeicao: undefined }
+      ? {
+          ...d,
+          status: 'aprovado' as const,
+          // Aprovar implica ter recebido: o carimbo é preenchido se ainda faltava.
+          recebidoEm: d.recebidoEm ?? estado.dataSimulacao,
+          recebidoPor: d.recebidoPor ?? analisadoPor,
+          analisadoEm: estado.dataSimulacao,
+          analisadoPor,
+          motivoRejeicao: undefined,
+          versoes: d.versoes.map((v) =>
+            v.versao === d.versaoAtual
+              ? {
+                  ...v,
+                  resultado: 'aprovado' as const,
+                  recebidoEm: v.recebidoEm ?? estado.dataSimulacao,
+                  recebidoPor: v.recebidoPor ?? analisadoPor,
+                  analisadoEm: estado.dataSimulacao,
+                  analisadoPor,
+                }
+              : v,
+          ),
+        }
       : d,
   )
   const novo: EstadoDemo = { ...estado, documentos }
@@ -269,7 +499,7 @@ export function aprovarDocumento(estado: EstadoDemo, documentoId: string): Resul
         novo,
         documento.contratoId,
         'documento_aprovado',
-        `Documento "${documento.nome}" aprovado pela contratante.`,
+        `Documento "${documento.nome}" (versão ${documento.versaoAtual}) aprovado.`,
         'contratante',
       ),
     },
@@ -287,20 +517,37 @@ export function rejeitarDocumento(
   if (documento.status !== 'enviado')
     return { ok: false, mensagem: 'Somente documentos enviados podem ser rejeitados.' }
   if (!motivo.trim())
-    return { ok: false, mensagem: 'A justificativa é obrigatória para rejeitar um documento.' }
+    return { ok: false, mensagem: 'O motivo da recusa é obrigatório para rejeitar um documento.' }
 
   const contrato = acharContrato(estado, documento.contratoId)
   if (!contrato) return { ok: false, mensagem: 'Contrato não encontrado.' }
   const bloqueio = bloqueioPorLiberacao(contrato)
   if (bloqueio) return { ok: false, mensagem: bloqueio }
 
+  const analisadoPor = RESPONSAVEL_POR_PERFIL.contratante
   const documentos = estado.documentos.map((d) =>
     d.id === documentoId
       ? {
           ...d,
           status: 'rejeitado' as const,
-          analisadoEm: hojeISO(),
+          recebidoEm: d.recebidoEm ?? estado.dataSimulacao,
+          recebidoPor: d.recebidoPor ?? analisadoPor,
+          analisadoEm: estado.dataSimulacao,
+          analisadoPor,
           motivoRejeicao: motivo.trim(),
+          versoes: d.versoes.map((v) =>
+            v.versao === d.versaoAtual
+              ? {
+                  ...v,
+                  resultado: 'rejeitado' as const,
+                  recebidoEm: v.recebidoEm ?? estado.dataSimulacao,
+                  recebidoPor: v.recebidoPor ?? analisadoPor,
+                  analisadoEm: estado.dataSimulacao,
+                  analisadoPor,
+                  motivoRejeicao: motivo.trim(),
+                }
+              : v,
+          ),
         }
       : d,
   )
@@ -313,11 +560,11 @@ export function rejeitarDocumento(
         novo,
         documento.contratoId,
         'documento_rejeitado',
-        `Documento "${documento.nome}" rejeitado. Justificativa: ${motivo.trim()}`,
+        `Documento "${documento.nome}" (versão ${documento.versaoAtual}) recusado. Motivo: ${motivo.trim()}`,
         'contratante',
       ),
     },
-    mensagem: `Documento "${documento.nome}" rejeitado. A contratada poderá reenviar.`,
+    mensagem: `Documento "${documento.nome}" recusado. A contratada verá o motivo e poderá reenviar.`,
   }
 }
 
@@ -330,8 +577,17 @@ export function aceitarEntrega(estado: EstadoDemo, contratoId: string): Resultad
   const bloqueio = bloqueioPorLiberacao(contrato)
   if (bloqueio) return { ok: false, mensagem: bloqueio }
 
+  const por = RESPONSAVEL_POR_PERFIL.contratante
   const contratos = estado.contratos.map((c) =>
-    c.id === contratoId ? { ...c, entregaAceita: true, entregaAceitaEm: hojeISO() } : c,
+    c.id === contratoId
+      ? {
+          ...c,
+          entregaAceita: true,
+          entregaAceitaEm: estado.dataSimulacao,
+          entregaAceitaPor: por,
+          dataConclusao: c.dataConclusao ?? estado.dataSimulacao,
+        }
+      : c,
   )
   const novo: EstadoDemo = { ...estado, contratos }
   return {
@@ -367,7 +623,8 @@ export function abrirDisputa(
     id: novoId('dp'),
     contratoId,
     descricao: descricao.trim(),
-    abertaEm: hojeISO(),
+    abertaEm: estado.dataSimulacao,
+    abertaPor: RESPONSAVEL_POR_PERFIL.contratante,
     status: 'aberta',
   }
   const novo: EstadoDemo = { ...estado, disputas: [...estado.disputas, disputa] }
@@ -399,7 +656,13 @@ export function resolverDisputa(
 
   const disputas = estado.disputas.map((d) =>
     d.id === disputaId
-      ? { ...d, status: 'resolvida' as const, resolucao: resolucao.trim(), resolvidaEm: hojeISO() }
+      ? {
+          ...d,
+          status: 'resolvida' as const,
+          resolucao: resolucao.trim(),
+          resolvidaEm: estado.dataSimulacao,
+          resolvidaPor: RESPONSAVEL_POR_PERFIL.contratante,
+        }
       : d,
   )
   const novo: EstadoDemo = { ...estado, disputas }
@@ -424,24 +687,28 @@ export function resolverDisputa(
 export function simularProximoMes(estado: EstadoDemo, contratoId: string): ResultadoAcao {
   const contrato = acharContrato(estado, contratoId)
   if (!contrato) return { ok: false, mensagem: 'Contrato não encontrado.' }
-  if (contrato.liberadoEm)
+  if (!contrato.moduloFinanceiroAtivo) {
     return {
       ok: false,
-      mensagem: 'Contrato já liberado: não há mais rendimentos a simular.',
+      mensagem:
+        'Este contrato não tem módulo financeiro: não há aplicação nem rendimento a simular.',
     }
+  }
+  if (contrato.liberadoEm)
+    return { ok: false, mensagem: 'Contrato já liberado: não há mais rendimentos a simular.' }
 
   const resumo = calcularResumoContrato(contrato, estado.medicoes, estado.documentos, estado.rendimentos)
   if (resumo.principalElegivelRendimentoCents <= 0) {
     return {
       ok: false,
       mensagem:
-        'Não há principal depositado neste contrato. Confirme o depósito simulado de uma retenção antes de simular o rendimento.',
+        'Não há principal depositado neste contrato. Confirme o depósito de uma retenção antes de simular o rendimento.',
     }
   }
 
   const periodo = resumo.ultimoPeriodoRendimento
     ? proximoPeriodo(resumo.ultimoPeriodoRendimento)
-    : periodoAtual()
+    : estado.dataSimulacao.slice(0, 7)
 
   if (estado.rendimentos.some((r) => r.contratoId === contratoId && r.periodo === periodo)) {
     return { ok: false, mensagem: `Já existe um lançamento para o período ${periodo}.` }
@@ -463,7 +730,7 @@ export function simularProximoMes(estado: EstadoDemo, contratoId: string): Resul
     rendimentoBrutoCents: calculo.rendimentoBrutoCents,
     receitaPlataformaCents: calculo.receitaPlataformaCents,
     rendimentoContratadaCents: calculo.rendimentoContratadaCents,
-    criadoEm: agora(),
+    criadoEm: carimbo(estado),
   }
 
   const novo: EstadoDemo = { ...estado, rendimentos: [...estado.rendimentos, lancamento] }
@@ -502,7 +769,7 @@ export function solicitarLiberacao(estado: EstadoDemo, contratoId: string): Resu
   }
 
   const contratos = estado.contratos.map((c) =>
-    c.id === contratoId ? { ...c, liberacaoSolicitadaEm: hojeISO() } : c,
+    c.id === contratoId ? { ...c, liberacaoSolicitadaEm: estado.dataSimulacao } : c,
   )
   const novo: EstadoDemo = { ...estado, contratos }
   return {
@@ -547,7 +814,7 @@ export function confirmarLiberacao(estado: EstadoDemo, contratoId: string): Resu
   }
 
   const contratos = estado.contratos.map((c) =>
-    c.id === contratoId ? { ...c, liberadoEm: hojeISO(), liberacao } : c,
+    c.id === contratoId ? { ...c, liberadoEm: estado.dataSimulacao, liberacao } : c,
   )
   const novo: EstadoDemo = { ...estado, contratos }
   return {
@@ -558,7 +825,7 @@ export function confirmarLiberacao(estado: EstadoDemo, contratoId: string): Resu
         novo,
         contratoId,
         'liberacao_confirmada',
-        `Liberação simulada confirmada: ${formatarMoeda(liberacao.totalCents)} (principal de ${formatarMoeda(liberacao.principalCents)} + rendimentos de ${formatarMoeda(liberacao.rendimentoContratadaCents)}).`,
+        `Liberação confirmada: ${formatarMoeda(liberacao.totalCents)}${contrato.moduloFinanceiroAtivo ? ` (principal de ${formatarMoeda(liberacao.principalCents)} + rendimentos de ${formatarMoeda(liberacao.rendimentoContratadaCents)})` : ''}.`,
         'contratante',
       ),
     },
@@ -566,7 +833,7 @@ export function confirmarLiberacao(estado: EstadoDemo, contratoId: string): Resu
   }
 }
 
-// ---------------------------------------------------------------- configurações
+// ---------------------------------------------------------------- configurações e planos
 
 export function salvarConfiguracoes(estado: EstadoDemo, config: Configuracoes): ResultadoAcao {
   // Alterações de taxa valem apenas para simulações futuras: os lançamentos já
@@ -578,4 +845,50 @@ export function salvarConfiguracoes(estado: EstadoDemo, config: Configuracoes): 
   }
 }
 
-export type { Documento }
+export function definirPlano(
+  estado: EstadoDemo,
+  contratanteId: string,
+  planoId: IdPlano,
+): ResultadoAcao {
+  const contratante = estado.contratantes.find((c) => c.id === contratanteId)
+  if (!contratante) return { ok: false, mensagem: 'Contratante não encontrada.' }
+  return {
+    ok: true,
+    estado: {
+      ...estado,
+      contratantes: estado.contratantes.map((c) =>
+        c.id === contratanteId ? { ...c, planoId } : c,
+      ),
+    },
+    mensagem: `Plano de ${contratante.nome} atualizado.`,
+  }
+}
+
+export function alternarModuloFinanceiro(estado: EstadoDemo, contratoId: string): ResultadoAcao {
+  const contrato = acharContrato(estado, contratoId)
+  if (!contrato) return { ok: false, mensagem: 'Contrato não encontrado.' }
+  const bloqueio = bloqueioPorLiberacao(contrato)
+  if (bloqueio) return { ok: false, mensagem: bloqueio }
+  if (contrato.moduloFinanceiroAtivo && estado.rendimentos.some((r) => r.contratoId === contratoId)) {
+    return {
+      ok: false,
+      mensagem:
+        'Este contrato já tem rendimentos lançados. Desligar o módulo financeiro apagaria o extrato; use "Restaurar demonstração" para recomeçar.',
+    }
+  }
+  const ativo = !contrato.moduloFinanceiroAtivo
+  return {
+    ok: true,
+    estado: {
+      ...estado,
+      contratos: estado.contratos.map((c) =>
+        c.id === contratoId ? { ...c, moduloFinanceiroAtivo: ativo } : c,
+      ),
+    },
+    mensagem: ativo
+      ? 'Módulo financeiro ativado: o contrato passa a ter depósito, rendimento e participação da plataforma.'
+      : 'Módulo financeiro desativado: o contrato acompanha apenas o saldo retido e as condições.',
+  }
+}
+
+export { calcularDataMinimaLiberacao }

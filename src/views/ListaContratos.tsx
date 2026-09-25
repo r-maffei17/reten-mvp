@@ -1,4 +1,5 @@
-// Lista de contratos da contratante, com busca por texto e filtro por situação.
+// Lista de contratos da contratante, com busca por texto e filtros por situação
+// e por módulo financeiro.
 
 import { useMemo, useState } from 'react'
 import { useDemo } from '../app/DemoContexto'
@@ -9,22 +10,25 @@ import { formatarMoeda, formatarPercentual } from '../domain/money'
 import { detalharTodos } from '../domain/selecoes'
 import type { StatusLiberacao } from '../domain/types'
 import { Campo, Painel, Vazio } from '../components/Interface'
-import { EtiquetaLiberacao } from '../components/Status'
+import { EtiquetaLiberacao, EtiquetaModulo } from '../components/Status'
 
 type FiltroSituacao = 'todas' | StatusLiberacao
+type FiltroModulo = 'todos' | 'com' | 'sem'
 
 export function ListaContratos() {
   const { estado } = useDemo()
   const [busca, setBusca] = useState('')
   const [situacao, setSituacao] = useState<FiltroSituacao>('todas')
+  const [modulo, setModulo] = useState<FiltroModulo>('todos')
 
   const detalhados = useMemo(() => detalharTodos(estado), [estado])
 
   const filtrados = useMemo(() => {
     const termo = busca.trim().toLowerCase()
     return detalhados.filter((d) => {
-      const combinaSituacao = situacao === 'todas' || d.avaliacao.status === situacao
-      if (!combinaSituacao) return false
+      if (situacao !== 'todas' && d.avaliacao.status !== situacao) return false
+      if (modulo === 'com' && !d.contrato.moduloFinanceiroAtivo) return false
+      if (modulo === 'sem' && d.contrato.moduloFinanceiroAtivo) return false
       if (!termo) return true
       const alvo = [
         d.contrato.codigo,
@@ -36,7 +40,14 @@ export function ListaContratos() {
         .toLowerCase()
       return alvo.includes(termo)
     })
-  }, [detalhados, busca, situacao])
+  }, [detalhados, busca, situacao, modulo])
+
+  const limpar = () => {
+    setBusca('')
+    setSituacao('todas')
+    setModulo('todos')
+  }
+  const temFiltro = busca !== '' || situacao !== 'todas' || modulo !== 'todos'
 
   return (
     <>
@@ -44,11 +55,14 @@ export function ListaContratos() {
         <div>
           <h1>Contratos</h1>
           <p className="descricao">
-            {detalhados.length} contratos nesta demonstração. Use a busca e o filtro para chegar mais
+            {detalhados.length} contratos nesta demonstração. Use a busca e os filtros para chegar mais
             rápido ao contrato desejado.
           </p>
         </div>
         <div className="acoes">
+          <button className="botao secundario" onClick={() => navegar('/contratante/importar')}>
+            ⇪ Importar cauções do ERP (CSV)
+          </button>
           <button className="botao primario" onClick={() => navegar('/contratante/contratos/novo')}>
             + Cadastrar contrato
           </button>
@@ -63,7 +77,7 @@ export function ListaContratos() {
               type="search"
               value={busca}
               onChange={(e) => setBusca(e.target.value)}
-              placeholder="Ex.: CT-2024-001 ou Subestação"
+              placeholder="Ex.: CT-2026-100 ou Subestação"
             />
           </Campo>
           <Campo id="filtro-situacao" rotulo="Situação da liberação">
@@ -79,14 +93,19 @@ export function ListaContratos() {
               <option value="liberada">{ROTULO_STATUS_LIBERACAO.liberada}</option>
             </select>
           </Campo>
-          {busca || situacao !== 'todas' ? (
-            <button
-              className="botao secundario"
-              onClick={() => {
-                setBusca('')
-                setSituacao('todas')
-              }}
+          <Campo id="filtro-modulo" rotulo="Módulo financeiro">
+            <select
+              id="filtro-modulo"
+              value={modulo}
+              onChange={(e) => setModulo(e.target.value as FiltroModulo)}
             >
+              <option value="todos">Todos os contratos</option>
+              <option value="com">Com módulo financeiro</option>
+              <option value="sem">Sem módulo financeiro</option>
+            </select>
+          </Campo>
+          {temFiltro ? (
+            <button className="botao secundario" onClick={limpar}>
               Limpar filtros
             </button>
           ) : null}
@@ -98,15 +117,9 @@ export function ListaContratos() {
           <Vazio
             simbolo="🔍"
             titulo="Nenhum contrato encontrado"
-            descricao="Ajuste a busca ou o filtro de situação para ver outros contratos da demonstração."
+            descricao="Ajuste a busca ou os filtros para ver outros contratos da demonstração."
             acao={
-              <button
-                className="botao secundario"
-                onClick={() => {
-                  setBusca('')
-                  setSituacao('todas')
-                }}
-              >
+              <button className="botao secundario" onClick={limpar}>
                 Limpar filtros
               </button>
             }
@@ -133,6 +146,9 @@ export function ListaContratos() {
                       <div className="sub-linha">{d.contrato.nome}</div>
                       <div className="sub-linha">
                         Liberação a partir de {formatarData(d.contrato.dataMinimaLiberacao)}
+                      </div>
+                      <div style={{ marginTop: 4 }}>
+                        <EtiquetaModulo ativo={d.contrato.moduloFinanceiroAtivo} />
                       </div>
                     </td>
                     <td>{d.contratada?.nome}</td>

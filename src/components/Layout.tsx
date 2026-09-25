@@ -1,9 +1,12 @@
 // Estrutura da aplicação: menu lateral (computador), menu recolhível (celular),
-// barra superior com o seletor de perfis e a faixa que identifica o ambiente.
+// barra superior com o seletor de perfis, a data da simulação e a faixa que
+// identifica o ambiente.
 
 import { useEffect, useState, type ReactNode } from 'react'
 import { useDemo } from '../app/DemoContexto'
 import { navegar } from '../app/rotas'
+import { ROTULO_PERFIL } from '../domain/atores'
+import { formatarData } from '../domain/datas'
 import type { Perfil } from '../domain/types'
 import { Confirmacao } from './Interface'
 
@@ -20,6 +23,7 @@ const MENUS: Record<Perfil, ItemMenu[]> = {
     { rota: '/contratante', rotulo: 'Painel', icone: '▣' },
     { rota: '/contratante/contratos', rotulo: 'Contratos', icone: '▤', prefixo: true },
     { rota: '/contratante/contratos/novo', rotulo: 'Cadastrar contrato', icone: '＋' },
+    { rota: '/contratante/importar', rotulo: 'Importar cauções (CSV)', icone: '⇪' },
   ],
   contratada: [
     { rota: '/contratada', rotulo: 'Painel', icone: '▣' },
@@ -28,14 +32,10 @@ const MENUS: Record<Perfil, ItemMenu[]> = {
   plataforma: [
     { rota: '/plataforma', rotulo: 'Painel', icone: '▣' },
     { rota: '/plataforma/contratos', rotulo: 'Contratos administrados', icone: '▤' },
+    { rota: '/plataforma/planos', rotulo: 'Planos', icone: '◆' },
+    { rota: '/plataforma/simulacao', rotulo: 'Data da simulação', icone: '◷' },
     { rota: '/plataforma/configuracoes', rotulo: 'Parâmetros da simulação', icone: '⚙' },
   ],
-}
-
-const ROTULO_PERFIL: Record<Perfil, string> = {
-  contratante: 'Contratante',
-  contratada: 'Contratada',
-  plataforma: 'Plataforma',
 }
 
 const RAIZ_PERFIL: Record<Perfil, string> = {
@@ -53,7 +53,7 @@ export function Layout({
   titulo: string
   children: ReactNode
 }) {
-  const { perfil, definirPerfil, restaurarDemonstracao, persistenciaAtiva } = useDemo()
+  const { estado, perfil, definirPerfil, restaurarDemonstracao, persistenciaAtiva } = useDemo()
   const [menuAberto, setMenuAberto] = useState(false)
   const [confirmandoRestauracao, setConfirmandoRestauracao] = useState(false)
 
@@ -66,7 +66,7 @@ export function Layout({
 
   const estaAtivo = (item: ItemMenu) => {
     if (item.prefixo) {
-      // "Cadastrar contrato" tem rota própria e não deve acender "Contratos".
+      // Rotas próprias não devem acender o item "Contratos".
       if (rota === '/contratante/contratos/novo') return false
       return rota === item.rota || rota.startsWith(`${item.rota}/`)
     }
@@ -83,10 +83,10 @@ export function Layout({
       <aside className={`menu-lateral${menuAberto ? ' aberto' : ''}`} aria-label="Menu principal">
         <div className="menu-marca">
           <span className="logo" aria-hidden="true">
-            R
+            TR
           </span>
           <span>
-            <span className="nome">Reten</span>
+            <span className="nome">TrustRetain</span>
             <span className="sub">Gestão de retenções contratuais</span>
           </span>
         </div>
@@ -155,6 +155,13 @@ export function Layout({
           </button>
           <span className="titulo-pagina">{titulo}</span>
           <span className="espaco" />
+          <a
+            className="chip-data"
+            href="#/plataforma/simulacao"
+            title="Data de referência usada em todas as travas de prazo"
+          >
+            <span aria-hidden="true">◷</span> Simulação: {formatarData(estado.dataSimulacao)}
+          </a>
           <div className="seletor-perfil" role="group" aria-label="Selecionar perfil de demonstração">
             {(Object.keys(ROTULO_PERFIL) as Perfil[]).map((p) => (
               <button key={p} aria-pressed={perfil === p} onClick={() => trocarPerfil(p)}>
@@ -184,7 +191,7 @@ export function Layout({
             <>
               <p>
                 Todas as alterações feitas neste navegador serão apagadas e os dados de exemplo
-                voltarão ao estado inicial.
+                voltarão ao estado inicial, inclusive a data da simulação.
               </p>
               <p className="texto-pequeno texto-mudo" style={{ marginBottom: 0 }}>
                 Esta ação não pode ser desfeita.
