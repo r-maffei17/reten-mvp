@@ -1,4 +1,5 @@
 // Visão da contratada: apenas os contratos da empresa selecionada.
+// A tela inicial abre pelas pendências, com responsável, motivo e prazo em cada item.
 
 import { useMemo } from 'react'
 import { useDemo } from '../app/DemoContexto'
@@ -7,7 +8,8 @@ import { formatarData } from '../domain/datas'
 import { formatarMoeda } from '../domain/money'
 import { detalharTodos, listarPendenciasContratada } from '../domain/selecoes'
 import { CartaoIndicador, Painel, Vazio } from '../components/Interface'
-import { EtiquetaLiberacao } from '../components/Status'
+import { EtiquetaLiberacao, EtiquetaModulo } from '../components/Status'
+import { ListaPendencias } from './Pendencias'
 
 function SeletorContratada() {
   const { estado, contratadaSelecionadaId, definirContratadaSelecionada } = useDemo()
@@ -50,6 +52,7 @@ export function PainelContratada() {
   const rendimentos = contratos.reduce((s, d) => s + d.resumo.rendimentoRetidoCents, 0)
   const saldoTotal = principalRetido + rendimentos
   const liberado = contratos.reduce((s, d) => s + d.resumo.totalLiberadoCents, 0)
+  const temModulo = contratos.some((d) => d.contrato.moduloFinanceiroAtivo)
 
   return (
     <>
@@ -57,8 +60,8 @@ export function PainelContratada() {
         <div>
           <h1>Painel da contratada</h1>
           <p className="descricao">
-            {empresa ? `Contratos de ${empresa.nome}.` : ''} Acompanhe quanto está retido, quanto já
-            rendeu e o que falta para receber.
+            {empresa ? `Contratos de ${empresa.nome}` : ''} — o que precisa da sua ação aparece primeiro,
+            com responsável, motivo e prazo.
           </p>
         </div>
         <div className="acoes">
@@ -66,40 +69,9 @@ export function PainelContratada() {
         </div>
       </div>
 
-      <div className="grade-indicadores">
-        <CartaoIndicador
-          rotulo="Principal retido"
-          valor={formatarMoeda(principalRetido)}
-          apoio="Retenções com depósito simulado confirmado"
-        />
-        <CartaoIndicador
-          rotulo="Rendimentos destinados à contratada"
-          valor={formatarMoeda(rendimentos)}
-          tom="verde"
-          apoio="Rendimento bruto menos a participação da plataforma"
-        />
-        <CartaoIndicador
-          rotulo="Saldo total ainda retido"
-          valor={formatarMoeda(saldoTotal)}
-          apoio="Principal + rendimentos ainda não liberados"
-        />
-        <CartaoIndicador
-          rotulo="Valores já liberados"
-          valor={formatarMoeda(liberado)}
-          apoio="Liberações simuladas confirmadas pela contratante"
-        />
-        <CartaoIndicador
-          rotulo="Pendências para liberação"
-          valor={pendencias.length}
-          tom={pendencias.length > 0 ? 'ambar' : undefined}
-          apoio="Itens que precisam ser resolvidos para receber"
-        />
-      </div>
-
       <Painel
-        titulo="Pendências para liberação"
+        titulo={`Pendências para liberação (${pendencias.length})`}
         descricao="O que precisa acontecer, em ordem, para o saldo ser liberado."
-        semEspaco
       >
         {pendencias.length === 0 ? (
           <Vazio
@@ -108,45 +80,39 @@ export function PainelContratada() {
             descricao="Assim que houver documento a enviar ou condição a cumprir, o item aparece aqui."
           />
         ) : (
-          <div className="tabela-rolagem">
-            <table className="tabela">
-              <thead>
-                <tr>
-                  <th>Pendência</th>
-                  <th>Contrato</th>
-                  <th>Contratante</th>
-                  <th />
-                </tr>
-              </thead>
-              <tbody>
-                {pendencias.map((p, indice) => (
-                  <tr key={`${p.contratoId}-${indice}`}>
-                    <td>
-                      <div className="titulo-linha">{p.titulo}</div>
-                      <div className="sub-linha">{p.detalhe}</div>
-                    </td>
-                    <td>
-                      <div className="titulo-linha">{p.codigo}</div>
-                      <div className="sub-linha">{p.nomeContrato}</div>
-                    </td>
-                    <td>{p.empresa}</td>
-                    <td>
-                      <div className="acoes-celula">
-                        <button
-                          className="botao secundario pequeno"
-                          onClick={() => navegar(`/contratada/contratos/${p.contratoId}`)}
-                        >
-                          Abrir contrato
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <ListaPendencias
+            pendencias={pendencias}
+            rotaBase="/contratada/contratos"
+            dataReferencia={estado.dataSimulacao}
+          />
         )}
       </Painel>
+
+      <div className="grade-indicadores">
+        <CartaoIndicador
+          rotulo="Saldo retido"
+          valor={formatarMoeda(principalRetido)}
+          apoio="Retenções ainda não liberadas"
+        />
+        {temModulo ? (
+          <CartaoIndicador
+            rotulo="Rendimentos destinados à contratada"
+            valor={formatarMoeda(rendimentos)}
+            tom="verde"
+            apoio="Somente contratos com módulo financeiro ativo"
+          />
+        ) : null}
+        <CartaoIndicador
+          rotulo="Saldo total ainda retido"
+          valor={formatarMoeda(saldoTotal)}
+          apoio={temModulo ? 'Retenções + rendimentos ainda não liberados' : 'Retenções ainda não liberadas'}
+        />
+        <CartaoIndicador
+          rotulo="Valores já liberados"
+          valor={formatarMoeda(liberado)}
+          apoio="Liberações simuladas confirmadas pela contratante"
+        />
+      </div>
 
       <ListaContratosContratada />
     </>
@@ -166,6 +132,7 @@ function ListaContratosContratada() {
       </Painel>
     )
   }
+  const algumComModulo = contratos.some((d) => d.contrato.moduloFinanceiroAtivo)
   return (
     <Painel titulo="Meus contratos" semEspaco>
       <div className="tabela-rolagem">
@@ -174,8 +141,8 @@ function ListaContratosContratada() {
             <tr>
               <th>Contrato</th>
               <th>Contratante</th>
-              <th className="num">Principal retido</th>
-              <th className="num">Rendimentos</th>
+              <th className="num">Saldo retido</th>
+              {algumComModulo ? <th className="num">Rendimentos</th> : null}
               <th className="num">Saldo para liberação</th>
               <th>Situação</th>
               <th />
@@ -190,10 +157,19 @@ function ListaContratosContratada() {
                   <div className="sub-linha">
                     Liberação a partir de {formatarData(d.contrato.dataMinimaLiberacao)}
                   </div>
+                  <div style={{ marginTop: 4 }}>
+                    <EtiquetaModulo ativo={d.contrato.moduloFinanceiroAtivo} />
+                  </div>
                 </td>
                 <td>{d.contratante?.nome}</td>
                 <td className="num">{formatarMoeda(d.resumo.principalRetidoCents)}</td>
-                <td className="num">{formatarMoeda(d.resumo.rendimentoRetidoCents)}</td>
+                {algumComModulo ? (
+                  <td className="num">
+                    {d.contrato.moduloFinanceiroAtivo
+                      ? formatarMoeda(d.resumo.rendimentoRetidoCents)
+                      : '—'}
+                  </td>
+                ) : null}
                 <td className="num">{formatarMoeda(d.resumo.saldoParaLiberacaoCents)}</td>
                 <td>
                   <EtiquetaLiberacao status={d.avaliacao.status} />

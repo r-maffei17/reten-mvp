@@ -34,3 +34,12 @@ export function EtiquetaDeposito({ confirmado }: { confirmado: boolean }) {
     <Etiqueta tom="alerta">Aguardando depósito</Etiqueta>
   )
 }
+
+/** Identifica se o contrato usa o módulo financeiro opcional. */
+export function EtiquetaModulo({ ativo }: { ativo: boolean }) {
+  return ativo ? (
+    <Etiqueta tom="info">Módulo financeiro ativo</Etiqueta>
+  ) : (
+    <Etiqueta tom="neutra">Sem módulo financeiro</Etiqueta>
+  )
+}

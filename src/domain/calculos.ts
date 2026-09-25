@@ -3,21 +3,33 @@
 // Premissas declaradas do MVP:
 // - A simulação desconsidera tributos e outros custos.
 // - Não há capitalização: o rendimento incide sempre sobre o principal depositado.
-// - A mensalidade da plataforma é separada e não reduz o saldo da contratada.
+// - A mensalidade do plano é separada e não reduz o saldo da contratada.
+// - O módulo financeiro é OPCIONAL por contrato. Quando desligado, não há
+//   depósito em custódia, rendimento nem participação da plataforma: o contrato
+//   acompanha apenas o saldo retido e as condições de liberação.
 
 import { arredondarCents } from './money'
-import type {
-  Configuracoes,
-  Contrato,
-  Disputa,
-  Documento,
-  LancamentoRendimento,
-  Medicao,
-} from './types'
+import type { Contrato, Disputa, Documento, LancamentoRendimento, Medicao } from './types'
 
 /** Retenção de uma medição = valor da medição × percentual de retenção. */
 export function calcularRetencao(valorMedicaoCents: number, percentualRetencao: number): number {
   return arredondarCents((valorMedicaoCents * percentualRetencao) / 100)
+}
+
+/**
+ * Data mínima de liberação a partir da conclusão e do prazo contratual.
+ * O prazo corre em dias corridos a partir do DIA SEGUINTE à conclusão, então o
+ * último dia do prazo é `conclusão + prazo`.
+ * Ex.: conclusão em 01/06/2026 com 60 dias → 31/07/2026.
+ */
+export function calcularDataMinimaLiberacao(dataConclusao: string, prazoDiasCorridos: number): string {
+  const [a, m, d] = dataConclusao.split('-').map(Number)
+  const data = new Date(a, m - 1, d)
+  data.setDate(data.getDate() + prazoDiasCorridos)
+  const ano = data.getFullYear()
+  const mes = String(data.getMonth() + 1).padStart(2, '0')
+  const dia = String(data.getDate()).padStart(2, '0')
+  return `${ano}-${mes}-${dia}`
 }
 
 export interface ResultadoRendimento {
@@ -51,15 +63,16 @@ export function calcularRendimento(
 }
 
 export interface ResumoContrato {
+  moduloFinanceiroAtivo: boolean
   /** Soma das medições registradas. */
   totalMedidoCents: number
   /** Quanto ainda pode ser medido dentro do valor do contrato. */
   saldoAMedirCents: number
-  /** Retenções com depósito simulado confirmado (base do rendimento). */
+  /** Retenções que compõem o principal. Com módulo financeiro, só as depositadas. */
   principalDepositadoCents: number
-  /** Retenções registradas mas sem depósito confirmado. */
+  /** Retenções registradas mas sem depósito confirmado (zero sem módulo financeiro). */
   principalAguardandoDepositoCents: number
-  /** Retenções totais calculadas (depositadas ou não). */
+  /** Retenções totais calculadas. */
   retencaoTotalCents: number
   rendimentoBrutoAcumuladoCents: number
   receitaPlataformaAcumuladaCents: number
@@ -72,7 +85,7 @@ export interface ResumoContrato {
   saldoParaLiberacaoCents: number
   /** Valor total já liberado neste contrato. */
   totalLiberadoCents: number
-  /** Base do próximo rendimento (0 se o contrato já foi liberado). */
+  /** Base do próximo rendimento (0 sem módulo financeiro ou após a liberação). */
   principalElegivelRendimentoCents: number
   medicoesPendentesDeposito: number
   documentosObrigatoriosPendentes: number
@@ -88,13 +101,19 @@ export function calcularResumoContrato(
   const doContrato = medicoes.filter((m) => m.contratoId === contrato.id)
   const docs = documentos.filter((d) => d.contratoId === contrato.id)
   const lancamentos = rendimentos.filter((r) => r.contratoId === contrato.id)
+  const comModulo = contrato.moduloFinanceiroAtivo
 
   const totalMedidoCents = doContrato.reduce((s, m) => s + m.valorCents, 0)
   const retencaoTotalCents = doContrato.reduce((s, m) => s + m.retencaoCents, 0)
-  const principalDepositadoCents = doContrato
-    .filter((m) => m.depositoConfirmado)
-    .reduce((s, m) => s + m.retencaoCents, 0)
-  const principalAguardandoDepositoCents = retencaoTotalCents - principalDepositadoCents
+
+  // Sem módulo financeiro não existe etapa de depósito: a retenção registrada já
+  // compõe integralmente o saldo retido.
+  const principalDepositadoCents = comModulo
+    ? doContrato.filter((m) => m.depositoConfirmado).reduce((s, m) => s + m.retencaoCents, 0)
+    : retencaoTotalCents
+  const principalAguardandoDepositoCents = comModulo
+    ? retencaoTotalCents - principalDepositadoCents
+    : 0
 
   const rendimentoBrutoAcumuladoCents = lancamentos.reduce((s, r) => s + r.rendimentoBrutoCents, 0)
   const receitaPlataformaAcumuladaCents = lancamentos.reduce((s, r) => s + r.receitaPlataformaCents, 0)
@@ -111,6 +130,7 @@ export function calcularResumoContrato(
   const ultimoPeriodoRendimento = periodos.length > 0 ? periodos[periodos.length - 1] : null
 
   return {
+    moduloFinanceiroAtivo: comModulo,
     totalMedidoCents,
     saldoAMedirCents: Math.max(0, contrato.valorTotalCents - totalMedidoCents),
     principalDepositadoCents,
@@ -123,19 +143,11 @@ export function calcularResumoContrato(
     rendimentoRetidoCents,
     saldoParaLiberacaoCents: principalRetidoCents + rendimentoRetidoCents,
     totalLiberadoCents: contrato.liberacao?.totalCents ?? 0,
-    principalElegivelRendimentoCents: liberado ? 0 : principalDepositadoCents,
-    medicoesPendentesDeposito: doContrato.filter((m) => !m.depositoConfirmado).length,
+    principalElegivelRendimentoCents: comModulo && !liberado ? principalDepositadoCents : 0,
+    medicoesPendentesDeposito: comModulo ? doContrato.filter((m) => !m.depositoConfirmado).length : 0,
     documentosObrigatoriosPendentes: docs.filter((d) => d.obrigatorio && d.status !== 'aprovado').length,
     ultimoPeriodoRendimento,
   }
-}
-
-/** Receita mensal projetada de assinaturas = nº de contratantes × mensalidade. */
-export function calcularReceitaAssinaturasMensal(
-  quantidadeContratantes: number,
-  config: Configuracoes,
-): number {
-  return quantidadeContratantes * config.mensalidadeCents
 }
 
 export function disputaAberta(disputas: Disputa[], contratoId: string): Disputa | undefined {

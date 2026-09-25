@@ -7,10 +7,17 @@ import { Avisos } from './components/Interface'
 import { Layout } from './components/Layout'
 import { ContratosContratada, PainelContratada } from './views/Contratada'
 import { DetalheContrato } from './views/DetalheContrato'
+import { ImportarCaucoes } from './views/ImportarCaucoes'
 import { ListaContratos } from './views/ListaContratos'
 import { NovoContrato } from './views/NovoContrato'
 import { PainelContratante } from './views/PainelContratante'
-import { ConfiguracoesPlataforma, ContratosPlataforma, PainelPlataforma } from './views/Plataforma'
+import {
+  ConfiguracoesPlataforma,
+  ContratosPlataforma,
+  PainelPlataforma,
+  PlanosPlataforma,
+  SimulacaoPlataforma,
+} from './views/Plataforma'
 import { Sobre } from './views/Sobre'
 import type { Perfil } from './domain/types'
 
@@ -30,6 +37,13 @@ function resolverTela(rota: string, contratadaSelecionadaId: string): TelaResolv
   }
 
   if (raiz === 'contratante') {
+    if (secao === 'importar') {
+      return {
+        titulo: 'Importar cauções do ERP',
+        conteudo: <ImportarCaucoes />,
+        perfilDaRota: 'contratante',
+      }
+    }
     if (secao === 'contratos') {
       if (terceiro === 'novo') {
         return {
@@ -69,6 +83,16 @@ function resolverTela(rota: string, contratadaSelecionadaId: string): TelaResolv
   }
 
   if (raiz === 'plataforma') {
+    if (secao === 'planos') {
+      return { titulo: 'Planos', conteudo: <PlanosPlataforma />, perfilDaRota: 'plataforma' }
+    }
+    if (secao === 'simulacao') {
+      return {
+        titulo: 'Data da simulação',
+        conteudo: <SimulacaoPlataforma />,
+        perfilDaRota: 'plataforma',
+      }
+    }
     if (secao === 'configuracoes') {
       return {
         titulo: 'Parâmetros da simulação',
@@ -109,7 +133,7 @@ export function App() {
     }
   }, [rota, perfil])
 
-  // Abrir um link direto de outro perfil (ex.: compartilhado no grupo) ajusta o seletor.
+  // Abrir um link direto de outro perfil ajusta o seletor.
   useEffect(() => {
     if (tela.perfilDaRota && tela.perfilDaRota !== perfil) {
       definirPerfil(tela.perfilDaRota)

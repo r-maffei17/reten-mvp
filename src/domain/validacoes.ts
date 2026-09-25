@@ -16,6 +16,8 @@ export interface DadosContratoFormulario {
   dataTermino: string
   dataMinimaLiberacao: string
   condicoesLiberacao: string
+  /** Prazo em dias corridos, quando a data mínima é derivada da conclusão. */
+  prazoDiasCorridos?: number | null
 }
 
 export function validarContrato(
@@ -53,6 +55,11 @@ export function validarContrato(
   if (!dados.dataMinimaLiberacao) erros.dataMinimaLiberacao = 'Informe a data mínima para liberação.'
   else if (dados.dataInicio && dados.dataMinimaLiberacao < dados.dataInicio)
     erros.dataMinimaLiberacao = 'A data mínima deve ser igual ou posterior ao início do contrato.'
+
+  if (dados.prazoDiasCorridos !== undefined && dados.prazoDiasCorridos !== null) {
+    if (!Number.isInteger(dados.prazoDiasCorridos) || dados.prazoDiasCorridos < 0)
+      erros.prazoDiasCorridos = 'O prazo deve ser um número inteiro de dias, igual ou maior que zero.'
+  }
 
   if (!dados.condicoesLiberacao.trim())
     erros.condicoesLiberacao = 'Descreva as condições de liberação.'
@@ -96,9 +103,9 @@ export function validarMedicao(
 
 export function validarRejeicaoDocumento(motivo: string): ErrosFormulario {
   const erros: ErrosFormulario = {}
-  if (!motivo.trim()) erros.motivo = 'A justificativa é obrigatória para rejeitar um documento.'
+  if (!motivo.trim()) erros.motivo = 'O motivo da recusa é obrigatório para rejeitar um documento.'
   else if (motivo.trim().length < 10)
-    erros.motivo = 'Descreva a justificativa com pelo menos 10 caracteres.'
+    erros.motivo = 'Descreva o motivo da recusa com pelo menos 10 caracteres.'
   return erros
 }
 
@@ -111,16 +118,12 @@ export function validarDisputa(descricao: string): ErrosFormulario {
 }
 
 export interface DadosConfiguracoesFormulario {
-  mensalidadeCents: number | null
   participacaoPercentual: number | null
   taxaMensalPercentual: number | null
 }
 
 export function validarConfiguracoes(dados: DadosConfiguracoesFormulario): ErrosFormulario {
   const erros: ErrosFormulario = {}
-
-  if (dados.mensalidadeCents === null) erros.mensalidade = 'Informe a mensalidade.'
-  else if (dados.mensalidadeCents < 0) erros.mensalidade = 'A mensalidade não pode ser negativa.'
 
   if (dados.participacaoPercentual === null) erros.participacao = 'Informe a participação da plataforma.'
   else if (dados.participacaoPercentual < 0 || dados.participacaoPercentual > 100)

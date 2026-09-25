@@ -1,5 +1,5 @@
 /* =========================================================================
-   Reten — estilos da aplicação.
+   TrustRetain — estilos da aplicação.
    Paleta: fundo claro, azul-escuro institucional e verde de confirmação.
    ========================================================================= */
 
@@ -405,4 +405,71 @@ table.tabela .acoes-celula { display: flex; gap: 6px; flex-wrap: wrap; justify-c
     background: var(--cinza-100); border-top: 1px solid var(--borda); position: sticky; left: 0;
   }
   .definicoes { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+}
+
+/* ------------------------------------------------------------------ data da simulação */
+
+.chip-data {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: var(--azul-50); border: 1px solid var(--azul-100); color: var(--azul-700);
+  border-radius: 999px; padding: 5px 12px; font-size: 0.8rem; font-weight: 650;
+  text-decoration: none; white-space: nowrap; font-variant-numeric: tabular-nums;
+}
+.chip-data:hover { background: var(--azul-100); border-color: var(--azul-600); }
+
+/* ------------------------------------------------------------------ planos */
+
+.grade-planos { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(258px, 1fr)); align-items: stretch; }
+.cartao-plano {
+  display: flex; flex-direction: column; gap: 10px; padding: 18px;
+  background: var(--branco); border: 1px solid var(--borda); border-radius: var(--raio); box-shadow: var(--sombra);
+}
+.cartao-plano.atual { border-color: var(--verde-500); box-shadow: 0 0 0 2px var(--verde-100), var(--sombra); }
+.cartao-plano h3 { font-size: 1.12rem; }
+.cartao-plano .faixa { font-size: 0.82rem; color: var(--cinza-700); }
+.cartao-plano .preco { font-size: 1.62rem; font-weight: 700; color: var(--azul-900); font-variant-numeric: tabular-nums; }
+.cartao-plano .preco .unidade { font-size: 0.82rem; font-weight: 600; color: var(--cinza-500); }
+.cartao-plano .antes-do-preco { font-size: 0.78rem; color: var(--cinza-500); font-weight: 600; }
+.cartao-plano ul { margin: 0; padding-left: 18px; font-size: 0.85rem; color: var(--cinza-700); display: grid; gap: 5px; }
+.cartao-plano .rodape-plano { margin-top: auto; padding-top: 6px; }
+
+/* ------------------------------------------------------------------ versões de documento */
+
+.versoes { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 6px; }
+.versoes li {
+  border: 1px solid var(--cinza-200); border-radius: var(--raio-sm); padding: 8px 10px;
+  background: var(--cinza-100); font-size: 0.79rem;
+}
+.versoes .cabecalho-versao { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-weight: 650; color: var(--azul-800); }
+.versoes .trilha { margin: 4px 0 0; padding: 0; list-style: none; display: grid; gap: 2px; color: var(--cinza-700); }
+.detalhes-versoes > summary { cursor: pointer; font-size: 0.8rem; color: var(--azul-600); font-weight: 650; }
+.detalhes-versoes > summary:hover { text-decoration: underline; }
+
+/* ------------------------------------------------------------------ pendências */
+
+.lista-pendencias { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.lista-pendencias li {
+  border: 1px solid var(--borda); border-left: 4px solid var(--azul-600);
+  border-radius: var(--raio-sm); padding: 12px 14px; background: var(--branco);
+}
+.lista-pendencias li.urgente { border-left-color: var(--vermelho-600); }
+.lista-pendencias li.aguardando { border-left-color: #d9a13a; }
+.lista-pendencias .titulo-pendencia { font-weight: 650; color: var(--azul-900); font-size: 0.93rem; }
+.lista-pendencias .motivo { font-size: 0.84rem; color: var(--cinza-700); margin-top: 3px; }
+.lista-pendencias .meta-pendencia {
+  display: flex; gap: 14px; flex-wrap: wrap; margin-top: 8px;
+  font-size: 0.78rem; color: var(--cinza-500);
+}
+.lista-pendencias .meta-pendencia strong { color: var(--cinza-700); font-weight: 650; }
+.lista-pendencias .acoes-pendencia { margin-top: 10px; }
+
+/* ------------------------------------------------------------------ importação CSV */
+
+.previa-csv { max-height: 320px; overflow: auto; border: 1px solid var(--borda); border-radius: var(--raio-sm); }
+.linha-erro td { background: var(--vermelho-100); color: var(--vermelho-700); }
+textarea.csv { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 0.8rem; min-height: 150px; white-space: pre; }
+
+@media (max-width: 760px) {
+  .chip-data { font-size: 0.74rem; padding: 4px 9px; }
+  .barra-topo { row-gap: 8px; }
 }

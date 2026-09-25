@@ -4,13 +4,13 @@
 import { criarDadosIniciais, VERSAO_DADOS } from '../domain/dadosIniciais'
 import type { EstadoDemo, Perfil } from '../domain/types'
 
-const CHAVE_ESTADO = 'reten.demo.estado.v1'
-const CHAVE_PERFIL = 'reten.demo.perfil.v1'
-const CHAVE_CONTRATADA = 'reten.demo.contratada.v1'
+const CHAVE_ESTADO = 'trustretain.demo.estado.v1'
+const CHAVE_PERFIL = 'trustretain.demo.perfil.v1'
+const CHAVE_CONTRATADA = 'trustretain.demo.contratada.v1'
 
 function armazenamentoDisponivel(): boolean {
   try {
-    const teste = '__reten_teste__'
+    const teste = '__trustretain_teste__'
     window.localStorage.setItem(teste, '1')
     window.localStorage.removeItem(teste)
     return true
@@ -28,7 +28,12 @@ export function carregarEstado(): EstadoDemo {
     if (!bruto) return criarDadosIniciais()
     const dados = JSON.parse(bruto) as EstadoDemo
     // Mudou a estrutura dos dados de exemplo? Recomeça da demonstração atual.
-    if (!dados || dados.versao !== VERSAO_DADOS || !Array.isArray(dados.contratos)) {
+    if (
+      !dados ||
+      dados.versao !== VERSAO_DADOS ||
+      !Array.isArray(dados.contratos) ||
+      typeof dados.dataSimulacao !== 'string'
+    ) {
       return criarDadosIniciais()
     }
     return dados

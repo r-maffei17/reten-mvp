@@ -1,5 +1,7 @@
 // Detalhe do contrato: resumo, medições, documentos, extrato financeiro e histórico.
 // A mesma tela serve aos três perfis; as ações disponíveis mudam conforme o perfil.
+// Quando o contrato não tem módulo financeiro, tudo que é depósito, rendimento e
+// participação da plataforma simplesmente não aparece.
 
 import { useMemo, useState } from 'react'
 import { useDemo } from '../app/DemoContexto'
@@ -10,6 +12,7 @@ import {
   aprovarDocumento,
   confirmarDeposito,
   confirmarLiberacao,
+  confirmarRecebimento,
   enviarDocumento,
   registrarMedicao,
   rejeitarDocumento,
@@ -23,13 +26,11 @@ import {
   formatarDataHora,
   formatarPeriodo,
   formatarPeriodoCurto,
-  hojeISO,
   proximoPeriodo,
-  periodoAtual,
 } from '../domain/datas'
 import { formatarMoeda, formatarPercentual, textoParaCents } from '../domain/money'
 import { detalharContrato } from '../domain/selecoes'
-import type { EventoHistorico } from '../domain/types'
+import type { Documento, EventoHistorico } from '../domain/types'
 import {
   temErros,
   validarDisputa,
@@ -38,27 +39,32 @@ import {
   type ErrosFormulario,
 } from '../domain/validacoes'
 import { Campo, Confirmacao, Etiqueta, Modal, Painel, Vazio } from '../components/Interface'
-import { EtiquetaDeposito, EtiquetaDocumento, EtiquetaLiberacao } from '../components/Status'
+import {
+  EtiquetaDeposito,
+  EtiquetaDocumento,
+  EtiquetaLiberacao,
+  EtiquetaModulo,
+} from '../components/Status'
 
 type Aba = 'resumo' | 'medicoes' | 'documentos' | 'extrato' | 'historico'
-
-const ABAS: Array<{ chave: Aba; rotulo: string }> = [
-  { chave: 'resumo', rotulo: 'Resumo' },
-  { chave: 'medicoes', rotulo: 'Medições e retenções' },
-  { chave: 'documentos', rotulo: 'Documentos e obrigações' },
-  { chave: 'extrato', rotulo: 'Extrato financeiro' },
-  { chave: 'historico', rotulo: 'Histórico' },
-]
 
 const COR_EVENTO: Record<string, string> = {
   documento_rejeitado: 'vermelho',
   disputa_aberta: 'vermelho',
   liberacao_confirmada: 'verde',
   documento_aprovado: 'verde',
+  documento_recebido: 'verde',
   deposito_confirmado: 'verde',
   entrega_aceita: 'verde',
   rendimento_simulado: 'ambar',
+  contrato_importado: 'ambar',
 }
+
+const ROTULO_RESULTADO_VERSAO = {
+  em_analise: 'Em análise',
+  aprovado: 'Aprovada',
+  rejeitado: 'Recusada',
+} as const
 
 export function DetalheContrato({ contratoId, voltarPara }: { contratoId: string; voltarPara: string }) {
   const { estado, perfil, executar } = useDemo()
@@ -66,8 +72,11 @@ export function DetalheContrato({ contratoId, voltarPara }: { contratoId: string
 
   const contrato = estado.contratos.find((c) => c.id === contratoId)
 
-  // Formulários e diálogos
-  const [formMedicao, setFormMedicao] = useState({ descricao: '', data: hojeISO(), valor: '' })
+  const [formMedicao, setFormMedicao] = useState({
+    descricao: '',
+    data: estado.dataSimulacao,
+    valor: '',
+  })
   const [errosMedicao, setErrosMedicao] = useState<ErrosFormulario>({})
   const [medicaoAberta, setMedicaoAberta] = useState(false)
 
@@ -126,6 +135,15 @@ export function DetalheContrato({ contratoId, voltarPara }: { contratoId: string
   const ehContratada = perfil === 'contratada'
   const ehPlataforma = perfil === 'plataforma'
   const liberado = Boolean(contrato.liberadoEm)
+  const comModulo = contrato.moduloFinanceiroAtivo
+
+  const abas: Array<{ chave: Aba; rotulo: string }> = [
+    { chave: 'resumo', rotulo: 'Resumo' },
+    { chave: 'medicoes', rotulo: 'Medições e retenções' },
+    { chave: 'documentos', rotulo: 'Documentos e obrigações' },
+    ...(comModulo ? [{ chave: 'extrato' as Aba, rotulo: 'Extrato financeiro' }] : []),
+    { chave: 'historico', rotulo: 'Histórico' },
+  ]
 
   const valorMedicaoCents = textoParaCents(formMedicao.valor)
   const retencaoPrevista =
@@ -136,7 +154,7 @@ export function DetalheContrato({ contratoId, voltarPara }: { contratoId: string
 
   const proximoPeriodoSimulacao = resumo.ultimoPeriodoRendimento
     ? proximoPeriodo(resumo.ultimoPeriodoRendimento)
-    : periodoAtual()
+    : estado.dataSimulacao.slice(0, 7)
 
   // ------------------------------------------------------------- handlers
 
@@ -157,7 +175,7 @@ export function DetalheContrato({ contratoId, voltarPara }: { contratoId: string
       }),
     )
     if (ok) {
-      setFormMedicao({ descricao: '', data: hojeISO(), valor: '' })
+      setFormMedicao({ descricao: '', data: estado.dataSimulacao, valor: '' })
       setErrosMedicao({})
       setMedicaoAberta(false)
       setAba('medicoes')
@@ -200,19 +218,56 @@ export function DetalheContrato({ contratoId, voltarPara }: { contratoId: string
     }
   }
 
-  // ------------------------------------------------------------- blocos
+  // ------------------------------------------------------------- blocos auxiliares
 
-  const blocoStatus = (
-    <div className="linha-acoes" style={{ alignItems: 'center' }}>
-      <EtiquetaLiberacao status={avaliacao.status} />
-      {disputaEmAberto ? <Etiqueta tom="perigo">Disputa em aberto</Etiqueta> : null}
-      {contrato.entregaAceita ? (
-        <Etiqueta tom="sucesso">Entrega aceita</Etiqueta>
-      ) : (
-        <Etiqueta tom="neutra">Entrega não aceita</Etiqueta>
-      )}
-    </div>
-  )
+  const historicoVersoes = (d: Documento) =>
+    d.versoes.length === 0 ? null : (
+      <details className="detalhes-versoes">
+        <summary>
+          Histórico de versões ({d.versoes.length} {d.versoes.length === 1 ? 'versão' : 'versões'})
+        </summary>
+        <ul className="versoes">
+          {[...d.versoes].reverse().map((v) => (
+            <li key={v.versao}>
+              <div className="cabecalho-versao">
+                <span>Versão {v.versao}</span>
+                <Etiqueta
+                  tom={
+                    v.resultado === 'aprovado'
+                      ? 'sucesso'
+                      : v.resultado === 'rejeitado'
+                        ? 'perigo'
+                        : 'info'
+                  }
+                >
+                  {ROTULO_RESULTADO_VERSAO[v.resultado]}
+                </Etiqueta>
+                <span className="texto-mudo">{v.arquivoNome}</span>
+              </div>
+              <ul className="trilha">
+                <li>
+                  Enviada em {formatarData(v.enviadoEm)} por {v.enviadoPor}
+                </li>
+                <li>
+                  {v.recebidoEm
+                    ? `Recebimento confirmado em ${formatarData(v.recebidoEm)} por ${v.recebidoPor}`
+                    : 'Recebimento ainda não confirmado'}
+                </li>
+                {v.analisadoEm ? (
+                  <li>
+                    {v.resultado === 'aprovado' ? 'Aprovada' : 'Recusada'} em{' '}
+                    {formatarData(v.analisadoEm)} por {v.analisadoPor}
+                  </li>
+                ) : (
+                  <li>Ainda sem decisão</li>
+                )}
+                {v.motivoRejeicao ? <li>Motivo da recusa: {v.motivoRejeicao}</li> : null}
+              </ul>
+            </li>
+          ))}
+        </ul>
+      </details>
+    )
 
   const checklist = (
     <ul className="checklist">
@@ -246,24 +301,35 @@ export function DetalheContrato({ contratoId, voltarPara }: { contratoId: string
           <p className="descricao">
             {contrato.codigo} · {detalhe.contratante?.nome} → {detalhe.contratada?.nome}
           </p>
-          <div style={{ marginTop: 8 }}>{blocoStatus}</div>
+          <div className="linha-acoes" style={{ marginTop: 8, alignItems: 'center' }}>
+            <EtiquetaLiberacao status={avaliacao.status} />
+            <EtiquetaModulo ativo={comModulo} />
+            {disputaEmAberto ? <Etiqueta tom="perigo">Disputa em aberto</Etiqueta> : null}
+            {contrato.entregaAceita ? (
+              <Etiqueta tom="sucesso">Entrega aceita</Etiqueta>
+            ) : (
+              <Etiqueta tom="neutra">Entrega não aceita</Etiqueta>
+            )}
+            {contrato.origem === 'erp' ? <Etiqueta tom="neutra">Importado do ERP</Etiqueta> : null}
+          </div>
         </div>
       </div>
 
       {liberado ? (
         <div className="aviso-sucesso-bloco">
           <strong>Contrato liberado em {formatarData(contrato.liberadoEm)}.</strong> Foram liberados{' '}
-          {formatarMoeda(contrato.liberacao?.totalCents ?? 0)} (principal de{' '}
-          {formatarMoeda(contrato.liberacao?.principalCents ?? 0)} e rendimentos de{' '}
-          {formatarMoeda(contrato.liberacao?.rendimentoContratadaCents ?? 0)}). O contrato não aceita
-          novas movimentações e o extrato foi preservado.
+          {formatarMoeda(contrato.liberacao?.totalCents ?? 0)}
+          {comModulo
+            ? ` (principal de ${formatarMoeda(contrato.liberacao?.principalCents ?? 0)} e rendimentos de ${formatarMoeda(contrato.liberacao?.rendimentoContratadaCents ?? 0)})`
+            : ''}
+          . O contrato não aceita novas movimentações e o extrato foi preservado.
         </div>
       ) : null}
 
       {disputaEmAberto ? (
         <div className="aviso-disputa">
-          <strong>Disputa em aberto desde {formatarData(disputaEmAberto.abertaEm)}.</strong>{' '}
-          {disputaEmAberto.descricao}
+          <strong>Disputa em aberto desde {formatarData(disputaEmAberto.abertaEm)}</strong> (registrada
+          por {disputaEmAberto.abertaPor}). {disputaEmAberto.descricao}
           {ehContratante ? (
             <div style={{ marginTop: 8 }}>
               <button
@@ -279,7 +345,7 @@ export function DetalheContrato({ contratoId, voltarPara }: { contratoId: string
 
       <div className="painel">
         <div className="abas" role="tablist" aria-label="Seções do contrato">
-          {ABAS.map((a) => (
+          {abas.map((a) => (
             <button
               key={a.chave}
               role="tab"
@@ -318,18 +384,32 @@ export function DetalheContrato({ contratoId, voltarPara }: { contratoId: string
                     {formatarData(contrato.dataInicio)} a {formatarData(contrato.dataTermino)}
                   </dd>
                 </div>
+                {contrato.dataConclusao ? (
+                  <div>
+                    <dt>Conclusão e aceite</dt>
+                    <dd>{formatarData(contrato.dataConclusao)}</dd>
+                  </div>
+                ) : null}
+                {contrato.prazoDiasCorridos !== undefined ? (
+                  <div>
+                    <dt>Prazo contratual</dt>
+                    <dd>{contrato.prazoDiasCorridos} dias corridos, do dia seguinte à conclusão</dd>
+                  </div>
+                ) : null}
                 <div>
                   <dt>Data mínima para liberação</dt>
                   <dd>{formatarData(contrato.dataMinimaLiberacao)}</dd>
                 </div>
                 <div>
-                  <dt>Principal retido</dt>
+                  <dt>Saldo retido</dt>
                   <dd className="numero">{formatarMoeda(resumo.principalRetidoCents)}</dd>
                 </div>
-                <div>
-                  <dt>Rendimentos da contratada</dt>
-                  <dd className="numero">{formatarMoeda(resumo.rendimentoRetidoCents)}</dd>
-                </div>
+                {comModulo ? (
+                  <div>
+                    <dt>Rendimentos da contratada</dt>
+                    <dd className="numero">{formatarMoeda(resumo.rendimentoRetidoCents)}</dd>
+                  </div>
+                ) : null}
                 <div>
                   <dt>Saldo para liberação</dt>
                   <dd className="numero">{formatarMoeda(resumo.saldoParaLiberacaoCents)}</dd>
@@ -339,6 +419,14 @@ export function DetalheContrato({ contratoId, voltarPara }: { contratoId: string
                   <dd className="numero">{formatarMoeda(resumo.totalLiberadoCents)}</dd>
                 </div>
               </dl>
+
+              {!comModulo ? (
+                <div className="nota">
+                  <strong>Este contrato não usa o módulo financeiro.</strong> A retenção é apenas
+                  acompanhada: não há depósito em custódia, aplicação, rendimento nem participação da
+                  plataforma. O saldo retido é a soma das retenções das medições.
+                </div>
+              ) : null}
 
               <div>
                 <h3 style={{ marginBottom: 6 }}>Condições de liberação previstas no contrato</h3>
@@ -376,7 +464,7 @@ export function DetalheContrato({ contratoId, voltarPara }: { contratoId: string
                 ) : null}
               </div>
 
-              {ehContratada && avaliacao.status === 'bloqueada' ? (
+              {avaliacao.status === 'bloqueada' ? (
                 <div className="aviso-bloqueio">
                   <strong>Liberação bloqueada. Falta cumprir:</strong>
                   <ul>
@@ -417,7 +505,7 @@ export function DetalheContrato({ contratoId, voltarPara }: { contratoId: string
                 <Vazio
                   simbolo="📐"
                   titulo="Nenhuma medição registrada"
-                  descricao="Registre a primeira medição para que a retenção seja calculada e o depósito simulado possa ser confirmado."
+                  descricao="Registre a primeira medição para que a retenção seja calculada."
                 />
               ) : (
                 <div className="tabela-rolagem">
@@ -429,8 +517,8 @@ export function DetalheContrato({ contratoId, voltarPara }: { contratoId: string
                         <th className="num">Valor da medição</th>
                         <th className="num">Valor retido</th>
                         <th className="num">Valor restante</th>
-                        <th>Depósito simulado</th>
-                        {ehContratante && !liberado ? <th /> : null}
+                        {comModulo ? <th>Depósito</th> : null}
+                        {comModulo && ehContratante && !liberado ? <th /> : null}
                       </tr>
                     </thead>
                     <tbody>
@@ -443,13 +531,15 @@ export function DetalheContrato({ contratoId, voltarPara }: { contratoId: string
                           <td className="num">{formatarMoeda(m.valorCents)}</td>
                           <td className="num">{formatarMoeda(m.retencaoCents)}</td>
                           <td className="num">{formatarMoeda(m.valorCents - m.retencaoCents)}</td>
-                          <td>
-                            <EtiquetaDeposito confirmado={m.depositoConfirmado} />
-                            {m.depositoConfirmadoEm ? (
-                              <div className="sub-linha">{formatarData(m.depositoConfirmadoEm)}</div>
-                            ) : null}
-                          </td>
-                          {ehContratante && !liberado ? (
+                          {comModulo ? (
+                            <td>
+                              <EtiquetaDeposito confirmado={m.depositoConfirmado} />
+                              {m.depositoConfirmadoEm ? (
+                                <div className="sub-linha">{formatarData(m.depositoConfirmadoEm)}</div>
+                              ) : null}
+                            </td>
+                          ) : null}
+                          {comModulo && ehContratante && !liberado ? (
                             <td>
                               <div className="acoes-celula">
                                 {!m.depositoConfirmado ? (
@@ -472,20 +562,22 @@ export function DetalheContrato({ contratoId, voltarPara }: { contratoId: string
                         <td className="num">
                           {formatarMoeda(resumo.totalMedidoCents - resumo.retencaoTotalCents)}
                         </td>
-                        <td colSpan={ehContratante && !liberado ? 2 : 1}>
-                          {formatarMoeda(resumo.principalDepositadoCents)} depositados
-                        </td>
+                        {comModulo ? (
+                          <td colSpan={ehContratante && !liberado ? 2 : 1}>
+                            {formatarMoeda(resumo.principalDepositadoCents)} depositados
+                          </td>
+                        ) : null}
                       </tr>
                     </tbody>
                   </table>
                 </div>
               )}
 
-              {resumo.principalAguardandoDepositoCents > 0 ? (
+              {comModulo && resumo.principalAguardandoDepositoCents > 0 ? (
                 <div className="nota">
                   {formatarMoeda(resumo.principalAguardandoDepositoCents)} em retenções ainda não têm
-                  depósito simulado confirmado. Somente valores com depósito confirmado entram na base
-                  de rendimento e permitem a liberação.
+                  depósito confirmado. Somente valores com depósito confirmado entram na base de
+                  rendimento e permitem a liberação.
                 </div>
               ) : null}
             </div>
@@ -508,7 +600,7 @@ export function DetalheContrato({ contratoId, voltarPara }: { contratoId: string
                         <th>Documento</th>
                         <th>Obrigatório</th>
                         <th>Situação</th>
-                        <th>Arquivo (fictício)</th>
+                        <th>Prazo</th>
                         <th />
                       </tr>
                     </thead>
@@ -517,11 +609,23 @@ export function DetalheContrato({ contratoId, voltarPara }: { contratoId: string
                         <tr key={d.id}>
                           <td>
                             <div className="titulo-linha">{d.nome}</div>
-                            {d.motivoRejeicao ? (
+                            {d.arquivoNome ? (
+                              <div className="sub-linha">
+                                Versão {d.versaoAtual} · {d.arquivoNome}
+                              </div>
+                            ) : (
+                              <div className="sub-linha">Nenhuma versão enviada.</div>
+                            )}
+                            {d.status === 'rejeitado' && d.motivoRejeicao ? (
                               <div className="aviso-rejeicao">
-                                <strong>Justificativa da rejeição:</strong> {d.motivoRejeicao}
+                                <strong>Motivo da recusa:</strong> {d.motivoRejeicao}
+                                <div style={{ marginTop: 4 }}>
+                                  Recusado em {formatarData(d.analisadoEm)} por {d.analisadoPor ?? '—'}{' '}
+                                  (versão {d.versaoAtual}).
+                                </div>
                               </div>
                             ) : null}
+                            {historicoVersoes(d)}
                           </td>
                           <td>{d.obrigatorio ? 'Sim' : 'Não'}</td>
                           <td>
@@ -529,14 +633,25 @@ export function DetalheContrato({ contratoId, voltarPara }: { contratoId: string
                             {d.enviadoEm ? (
                               <div className="sub-linha">Envio: {formatarData(d.enviadoEm)}</div>
                             ) : null}
+                            {d.recebidoEm ? (
+                              <div className="sub-linha">
+                                Recebimento confirmado em {formatarData(d.recebidoEm)}
+                              </div>
+                            ) : d.status === 'enviado' ? (
+                              <div className="sub-linha">Recebimento não confirmado</div>
+                            ) : null}
                             {d.analisadoEm ? (
-                              <div className="sub-linha">Análise: {formatarData(d.analisadoEm)}</div>
+                              <div className="sub-linha">
+                                Análise: {formatarData(d.analisadoEm)} por {d.analisadoPor ?? '—'}
+                              </div>
                             ) : null}
                           </td>
-                          <td className="texto-pequeno">{d.arquivoNome ?? '—'}</td>
+                          <td>{d.prazo ? formatarData(d.prazo) : '—'}</td>
                           <td>
                             <div className="acoes-celula">
-                              {ehContratada && !liberado && (d.status === 'pendente' || d.status === 'rejeitado') ? (
+                              {ehContratada &&
+                              !liberado &&
+                              (d.status === 'pendente' || d.status === 'rejeitado') ? (
                                 <button
                                   className="botao primario pequeno"
                                   onClick={() => executar((e) => enviarDocumento(e, d.id))}
@@ -546,6 +661,14 @@ export function DetalheContrato({ contratoId, voltarPara }: { contratoId: string
                               ) : null}
                               {ehContratante && !liberado && d.status === 'enviado' ? (
                                 <>
+                                  {!d.recebidoEm ? (
+                                    <button
+                                      className="botao secundario pequeno"
+                                      onClick={() => executar((e) => confirmarRecebimento(e, d.id))}
+                                    >
+                                      Confirmar recebimento
+                                    </button>
+                                  ) : null}
                                   <button
                                     className="botao verde pequeno"
                                     onClick={() => executar((e) => aprovarDocumento(e, d.id))}
@@ -560,7 +683,7 @@ export function DetalheContrato({ contratoId, voltarPara }: { contratoId: string
                                       setErrosRejeicao({})
                                     }}
                                   >
-                                    Rejeitar
+                                    Recusar
                                   </button>
                                 </>
                               ) : null}
@@ -575,13 +698,14 @@ export function DetalheContrato({ contratoId, voltarPara }: { contratoId: string
 
               <div className="nota">
                 Nesta demonstração não há upload de arquivos reais. A ação “Simular envio” gera um nome
-                de arquivo fictício e muda a situação do documento.
+                de arquivo fictício, cria uma nova versão e muda a situação do documento. Cada versão
+                guarda quem enviou, quem confirmou o recebimento, quem analisou e o motivo da recusa.
               </div>
             </div>
           ) : null}
 
           {/* ------------------------------------------------ EXTRATO */}
-          {aba === 'extrato' ? (
+          {aba === 'extrato' && comModulo ? (
             <div className="pilha">
               <dl className="definicoes">
                 <div>
@@ -671,9 +795,9 @@ export function DetalheContrato({ contratoId, voltarPara }: { contratoId: string
 
               <div className="nota">
                 Simulação sem capitalização: a taxa incide apenas sobre o principal depositado e ainda
-                não liberado. Os valores desconsideram tributos e outros custos. A mensalidade da
-                plataforma é cobrada à parte e não reduz o saldo da contratada. Alterações de taxa
-                valem somente para lançamentos futuros.
+                não liberado. Os valores desconsideram tributos e outros custos. A mensalidade do plano
+                é cobrada à parte e não reduz o saldo da contratada. Alterações de taxa valem somente
+                para lançamentos futuros.
               </div>
             </div>
           ) : null}
@@ -684,7 +808,7 @@ export function DetalheContrato({ contratoId, voltarPara }: { contratoId: string
               <Vazio
                 simbolo="🕘"
                 titulo="Sem registros no histórico"
-                descricao="As aprovações, depósitos, rendimentos e liberações deste contrato aparecerão aqui."
+                descricao="As aprovações, recebimentos, recusas e liberações deste contrato aparecerão aqui."
               />
             ) : (
               <ul className="linha-tempo">
@@ -694,7 +818,7 @@ export function DetalheContrato({ contratoId, voltarPara }: { contratoId: string
                     <div>
                       <div className="texto">{h.descricao}</div>
                       <div className="meta">
-                        {formatarDataHora(h.data)} · registrado pelo perfil {h.perfil}
+                        {formatarDataHora(h.data)} · {h.autor}
                       </div>
                     </div>
                   </li>
@@ -779,7 +903,7 @@ export function DetalheContrato({ contratoId, voltarPara }: { contratoId: string
 
       {documentoRejeitando ? (
         <Modal
-          titulo="Rejeitar documento"
+          titulo="Recusar documento"
           aoFechar={() => setDocumentoRejeitando(null)}
           rodape={
             <>
@@ -787,16 +911,16 @@ export function DetalheContrato({ contratoId, voltarPara }: { contratoId: string
                 Cancelar
               </button>
               <button className="botao perigo" onClick={salvarRejeicao}>
-                Rejeitar documento
+                Recusar documento
               </button>
             </>
           }
         >
           <Campo
             id="motivo-rejeicao"
-            rotulo="Justificativa da rejeição (obrigatória)"
+            rotulo="Motivo da recusa (obrigatório)"
             erro={errosRejeicao.motivo}
-            dica="A contratada verá esta justificativa e poderá reenviar o documento."
+            dica="A contratada verá este motivo, com a data e o responsável, e poderá reenviar o documento."
           >
             <textarea
               id="motivo-rejeicao"
@@ -901,9 +1025,10 @@ export function DetalheContrato({ contratoId, voltarPara }: { contratoId: string
           mensagem={
             <>
               <p>
-                Serão liberados <strong>{formatarMoeda(avaliacao.saldoParaLiberacaoCents)}</strong>:
-                principal de {formatarMoeda(resumo.principalRetidoCents)} mais rendimentos de{' '}
-                {formatarMoeda(resumo.rendimentoRetidoCents)}.
+                Serão liberados <strong>{formatarMoeda(avaliacao.saldoParaLiberacaoCents)}</strong>
+                {comModulo
+                  ? `: principal de ${formatarMoeda(resumo.principalRetidoCents)} mais rendimentos de ${formatarMoeda(resumo.rendimentoRetidoCents)}.`
+                  : ', correspondentes ao saldo retido do contrato.'}
               </p>
               <p>
                 Depois da confirmação o saldo retido é zerado, o extrato é preservado e o contrato não

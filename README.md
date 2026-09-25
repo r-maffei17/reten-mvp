@@ -1,4 +1,4 @@
-# Reten — Gestão de Retenções Contratuais (MVP de demonstração)
+# TrustRetain — Gestão de Retenções Contratuais (MVP de demonstração)
 
 Protótipo navegável para apresentação na disciplina de Empreendedorismo.
 Aplicação web em português do Brasil, com valores em reais e datas no formato brasileiro.
@@ -93,25 +93,53 @@ O seletor serve à apresentação e **não representa autenticação ou controle
 - Lista de contratos com busca e filtro por situação.
 - Cadastro de contrato (nome, código, partes, valor, percentual de retenção, datas e condições).
 - Registro de medição com cálculo automático da retenção e confirmação do depósito simulado.
-- Aprovação e rejeição de documentos (rejeição exige justificativa), aceite da entrega,
-  registro e resolução de disputa, e confirmação da liberação.
+- Confirmação de recebimento, aprovação e recusa de documentos (a recusa exige motivo e fica
+  registrada com data e responsável), aceite da entrega, registro e resolução de disputa,
+  e confirmação da liberação.
+- **Importação de cauções do ERP (CSV)**, com arquivo de exemplo e prévia linha a linha.
 
 ### Contratada
 - Seleção de qual empresa contratada de exemplo está sendo visualizada.
 - Painel com principal retido, rendimentos destinados a ela, saldo total retido,
   valores já liberados e pendências.
-- Extrato por contrato, checklist de condições, envio e reenvio simulado de documentos,
-  solicitação de liberação e acompanhamento do status.
+- Tela inicial pelas pendências: cada item traz responsável, motivo e prazo.
+- Extrato por contrato, checklist de condições, envio e reenvio simulado de documentos (com
+  histórico de versões), solicitação de liberação e acompanhamento do status.
 
 ### Plataforma
 - Painel com contratantes cadastradas, contratos administrados, total de recursos retidos,
   receita mensal projetada de assinaturas e receita acumulada de participação nos rendimentos
   (indicadores mantidos separados, sem somar períodos diferentes).
-- Parâmetros da simulação: mensalidade por contratante, participação da plataforma e taxa mensal
-  hipotética — todos identificados como hipóteses de demonstração.
+- **Planos**: Essencial (até 15 contratos com retenção ativa, R$ 2.500/mês), Profissional (até 50,
+  R$ 5.000/mês) e Corporativo (acima de 50, a partir de R$ 10.000/mês). Implantação única de
+  R$ 10.000 a R$ 30.000, apresentada separadamente. Fornecedores convidados não pagam nada.
+  O plano de cada contratante é ajustável na tela, e a receita mensal projetada acompanha.
+- **Data da simulação**: seletor da data de referência usada em toda a aplicação, com atalhos para
+  a véspera e para o dia do prazo do contrato de teste padrão, e botão para abrir e fechar uma
+  disputa nesse contrato.
+- Parâmetros da simulação: participação da plataforma e taxa mensal hipotética — hipóteses de
+  demonstração que só valem para contratos com módulo financeiro ativo.
+
+### Módulo financeiro (opcional, por contrato)
+
+Cada contrato é marcado como **com** ou **sem** módulo financeiro.
+
+| | Sem o módulo | Com o módulo |
+| --- | --- | --- |
+| Saldo retido | soma das retenções das medições | só as retenções com depósito confirmado |
+| Etapa de depósito | não existe | obrigatória para render e liberar |
+| Rendimento mensal | não há | taxa hipotética sobre o principal depositado |
+| Participação da plataforma | não há | 10% do rendimento bruto |
+| Telas | sem aba de extrato, sem coluna de depósito | extrato financeiro completo |
+
+A demonstração traz contratos dos dois tipos. Rendimento, depósito e participação simplesmente
+não aparecem nos contratos sem o módulo.
 
 ### Dados e persistência
-- A demonstração já vem com 2 contratantes, 3 contratadas e 5 contratos em situações variadas.
+- A demonstração vem com 2 contratantes, 3 contratadas e 6 contratos em situações variadas,
+  incluindo o **contrato de teste padrão** descrito abaixo.
+- **A data de referência é fixa (30/07/2026), não o relógio do computador.** Todo mundo do grupo
+  abre exatamente o mesmo cenário, e o relógio pode ser movido no perfil Plataforma.
 - As alterações ficam salvas no `localStorage` do navegador e sobrevivem a recarregar a página.
 - **Cada navegador tem a sua própria demonstração.** O que uma pessoa do grupo alterar não aparece
   para as outras. Banco de dados compartilhado e autenticação ficaram fora desta primeira versão.
@@ -134,7 +162,7 @@ erro de arredondamento.
 | Rendimento da contratada | rendimento bruto − receita da plataforma |
 | Saldo para liberação | principal retido + rendimentos acumulados da contratada |
 
-Exemplo de referência (é o contrato CT-2024-001 da demonstração):
+Exemplo de referência (contrato CT-2024-001 da demonstração, com módulo financeiro ativo):
 
 - Principal: R$ 5.000,00
 - Taxa mensal hipotética: 0,8% → rendimento bruto de R$ 40,00
@@ -150,16 +178,44 @@ Outras regras:
 - Alterar as taxas afeta **apenas simulações futuras**; os lançamentos anteriores preservam a taxa
   aplicada na época.
 - A simulação desconsidera tributos e outros custos.
-- A mensalidade da plataforma é cobrada à parte e **não reduz** o saldo da contratada.
+- A mensalidade do plano é cobrada à parte e **não reduz** o saldo da contratada.
+- Contratos **sem módulo financeiro** não rendem nada e não geram participação.
 
 ### Condições para liberar (todas obrigatórias)
 
-1. Todas as medições cadastradas com depósito simulado confirmado.
-2. Todos os documentos obrigatórios aprovados.
-3. Entrega aceita pela contratante.
-4. Data mínima de liberação atingida.
-5. Nenhuma disputa em aberto.
-6. Saldo positivo.
+1. Todos os documentos obrigatórios aprovados.
+2. Entrega aceita pela contratante.
+3. Prazo contratual cumprido (data mínima de liberação atingida).
+4. Nenhuma disputa em aberto.
+5. Saldo positivo.
+6. *Somente com módulo financeiro:* todas as medições com depósito confirmado.
+
+Cada uma delas, sozinha, bloqueia a solicitação de liberação.
+
+### Contrato de teste padrão (CT-2026-100)
+
+| Campo | Valor |
+| --- | --- |
+| Valor total e medido | R$ 100.000,00 |
+| Retenção | 5% → R$ 5.000,00 de principal |
+| Conclusão e aceite | 01/06/2026 |
+| Prazo | 60 dias corridos, contados do dia seguinte à conclusão |
+| Data mínima de liberação | 31/07/2026 |
+| Módulo financeiro | desativado |
+
+Com a data da simulação em **30/07/2026** o contrato fica bloqueado; em **31/07/2026** fica
+elegível. Os atalhos estão em Plataforma → Data da simulação.
+
+### Importar cauções do ERP (CSV)
+
+Contratante → "Importar cauções do ERP (CSV)". O arquivo precisa das colunas `contrato`,
+`fornecedor`, `valor medido`, `percentual`, `valor retido` e `vencimento`. Aceita ponto e vírgula
+ou vírgula como separador, valores no formato brasileiro e datas em dia/mês/ano.
+
+A tela já vem com o exemplo preenchido (e há botão para baixá-lo). Cada linha vira um contrato com
+uma medição registrada; fornecedores novos são cadastrados como contratadas convidadas. A prévia
+confere linha a linha se o valor retido bate com o percentual, se o percentual está entre 0 e 100,
+se a data é válida e se o código já existe — e explica o motivo de cada linha descartada.
 
 Estados do documento: pendente → enviado → aprovado ou rejeitado (com reenvio).
 Estados da liberação: bloqueada por pendências → elegível para solicitação → solicitada → liberada.
@@ -173,37 +229,41 @@ duplicada nem novas movimentações.
 
 ## 5. Roteiro de demonstração (5 minutos)
 
-**0:00 — Contexto (30 s).** Perfil **Contratante**. Aponte a faixa amarela: ambiente de demonstração,
-valores fictícios. No painel: 5 contratos, R$ 250.500,00 de principal retido, pendências priorizadas.
+A demonstração abre em **30/07/2026**, a véspera do prazo do contrato de teste padrão.
 
-**0:30 — O contrato (45 s).** Abra **CT-2024-001 — Subestação Norte 138 kV**. Contrato de R$ 1.000.000,00
-com 5% de retenção. Aba **Medições e retenções**: medição de R$ 100.000,00 → R$ 5.000,00 retidos,
-R$ 95.000,00 pagos. Depósito simulado já confirmado.
+**0:00 — Contexto (30 s).** Perfil **Contratante**. Aponte a faixa amarela (ambiente de
+demonstração, valores fictícios) e a data da simulação no topo. No painel: contratos, saldo retido
+e pendências priorizadas.
 
-**1:15 — O rendimento (45 s).** Aba **Extrato financeiro** → **Simular próximo mês**.
-Aparece: bruto R$ 40,00, R$ 4,00 para a plataforma, R$ 36,00 para a contratada.
-Saldo para liberação: **R$ 5.036,00**. Diga que é sem capitalização, sem tributos, e que a
-mensalidade é separada.
+**0:30 — A trava de prazo (60 s).** Abra **CT-2026-100 — Contrato de teste padrão**.
+R$ 100.000,00 medidos, 5% de retenção, R$ 5.000,00 retidos. Conclusão em 01/06/2026, 60 dias
+corridos, prazo em 31/07/2026. O checklist mostra quatro travas cumpridas e uma pendente: o prazo.
+Vá em **Plataforma → Data da simulação** e clique em **31/07/2026 — prazo cumprido**: o contrato
+vira **Elegível**. Volte para 30/07/2026 e ele bloqueia de novo.
 
-**2:00 — O bloqueio (60 s).** Volte à lista e abra **CT-2025-031 — Terraplenagem Trecho 4**.
-O checklist mostra exatamente o que falta: disputa em aberto. Clique em **Resolver disputa**,
-escreva o desfecho e veja o contrato virar **Elegível para solicitação**.
-(Alternativa: **CT-2025-022**, com documento rejeitado e justificativa visível.)
+**1:30 — As outras travas (45 s).** Na mesma tela, clique em **Abrir disputa neste contrato**:
+agora são duas travas pendentes. Feche a disputa e volte a uma. É a mensagem central: qualquer
+condição, sozinha, segura o dinheiro — e a plataforma diz exatamente qual.
 
-**3:00 — Os dois lados (60 s).** Troque para o perfil **Contratada** (Andrade Montagens).
-Mostre principal retido, rendimentos que são dela e as pendências. Abra o CT-2024-001 e clique em
-**Solicitar liberação**. Volte para **Contratante** e clique em **Confirmar liberação simulada**.
-O saldo zera, o extrato permanece e o botão de liberar some — sem liberação duplicada.
+**2:15 — Os documentos (60 s).** Perfil **Contratada**, empresa Vertax Engenharia. A tela abre
+pelas pendências, cada uma com **responsável, motivo e prazo**. Abra o contrato com a ART recusada:
+o motivo, a data e quem recusou estão visíveis, e o histórico de versões guarda cada remessa.
+Clique em **Reenviar documento** — nasce a versão 2. Como contratante, **Confirmar recebimento** e
+depois **Aprovar**.
 
-**4:00 — O negócio (45 s).** Perfil **Plataforma**. Duas fontes de receita, apresentadas separadamente:
-assinatura (R$ 998,00 por mês, 2 contratantes × R$ 499,00) e participação nos rendimentos
-(acumulado). Em **Parâmetros da simulação**, mostre que são hipóteses ajustáveis, não taxas reais.
+**3:15 — O módulo financeiro (45 s).** Abra **CT-2024-001**, que tem o módulo ativo: aba **Extrato
+financeiro** → **Simular próximo mês**. R$ 40,00 de rendimento bruto, R$ 4,00 para a plataforma,
+R$ 36,00 para a contratada, saldo de R$ 5.036,00. Volte ao CT-2026-100 e mostre que ali não há
+extrato, nem depósito, nem participação: o módulo é opcional e quem não contrata não paga por ele.
 
-**4:45 — Fechamento (15 s).** O que fica fora desta versão: integração bancária, banco de dados
-compartilhado, autenticação e liberação parcial. Use **Restaurar demonstração** para deixar tudo
-pronto para a próxima apresentação.
+**4:00 — O negócio (45 s).** Perfil **Plataforma → Planos**. Três faixas por volume, implantação
+única separada e fornecedores convidados sem custo. Mostre que a receita mensal projetada acompanha
+o plano de cada contratante. Se sobrar tempo, **Importar cauções do ERP (CSV)**: o exemplo já vem
+preenchido e a prévia aponta linha a linha o que não fecha.
 
----
+**4:45 — Fechamento (15 s).** Fora do escopo: integração bancária, banco de dados compartilhado,
+autenticação e liberação parcial. Use **Restaurar demonstração** para zerar antes da próxima
+apresentação.
 
 ## 6. Organização do código
 
@@ -219,6 +279,9 @@ src/
     acoes.ts         transições de estado (registrar, aprovar, liberar...)
     selecoes.ts      consultas derivadas usadas pelas telas
     dadosIniciais.ts dados fictícios da demonstração
+    planos.ts        planos comerciais e implantação
+    atores.ts        responsáveis fictícios que assinam as ações
+    csv.ts           leitura do CSV de cauções do ERP
   app/             estado da aplicação, persistência e rotas
   components/      componentes visuais reutilizáveis
   views/           telas de cada perfil
@@ -234,7 +297,7 @@ As regras de cálculo e de elegibilidade ficam separadas dos componentes visuais
 ## 7. Testes
 
 ```bash
-npm test          # 22 testes das regras de cálculo, elegibilidade e liberação
+npm test          # 35 testes das regras, travas, documentos, planos e importação
 npm run build     # verificação de tipos + build de produção
 ```
 
@@ -242,7 +305,7 @@ Os dois rodam automaticamente em cada pull request (`.github/workflows/verificar
 e antes de cada publicação.
 
 Há também um teste de ponta a ponta que percorre o fluxo inteiro em um navegador real
-(48 verificações). Ele precisa do Playwright, que não faz parte das dependências do projeto:
+(80 verificações). Ele precisa do Playwright, que não faz parte das dependências do projeto:
 
 ```bash
 npm install -D playwright && npx playwright install chromium

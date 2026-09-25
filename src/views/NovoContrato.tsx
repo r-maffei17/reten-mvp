@@ -1,10 +1,13 @@
 // Cadastro de contrato. Todos os campos são validados antes de gravar.
+// A data mínima de liberação pode ser derivada da conclusão mais o prazo em dias
+// corridos, contados a partir do dia seguinte à conclusão.
 
 import { useState } from 'react'
 import { useDemo } from '../app/DemoContexto'
 import { navegar } from '../app/rotas'
 import { criarContrato } from '../domain/acoes'
-import { hojeISO, somarMeses } from '../domain/datas'
+import { calcularDataMinimaLiberacao } from '../domain/calculos'
+import { formatarData, somarMeses } from '../domain/datas'
 import { formatarMoeda, textoParaCents, textoParaNumero } from '../domain/money'
 import { temErros, validarContrato, type ErrosFormulario } from '../domain/validacoes'
 import { Campo, Painel } from '../components/Interface'
@@ -12,6 +15,7 @@ import { Campo, Painel } from '../components/Interface'
 export function NovoContrato() {
   const { estado, executar } = useDemo()
   const [erros, setErros] = useState<ErrosFormulario>({})
+  const hoje = estado.dataSimulacao
   const [form, setForm] = useState({
     nome: '',
     codigo: '',
@@ -19,9 +23,13 @@ export function NovoContrato() {
     contratadaId: estado.contratadas[0]?.id ?? '',
     valorTotal: '',
     percentualRetencao: '5',
-    dataInicio: hojeISO(),
-    dataTermino: somarMeses(hojeISO(), 12),
-    dataMinimaLiberacao: somarMeses(hojeISO(), 14),
+    dataInicio: hoje,
+    dataTermino: somarMeses(hoje, 12),
+    moduloFinanceiro: 'nao',
+    // Prazo: quando preenchido, deriva a data mínima de liberação.
+    dataConclusao: '',
+    prazoDias: '60',
+    dataMinimaManual: somarMeses(hoje, 14),
     condicoesLiberacao:
       'Liberação integral após o aceite da entrega, aprovação de todos os documentos obrigatórios e decurso do prazo contratual.',
   })
@@ -31,6 +39,15 @@ export function NovoContrato() {
 
   const valorTotalCents = textoParaCents(form.valorTotal)
   const percentual = textoParaNumero(form.percentualRetencao)
+  const prazoDias = textoParaNumero(form.prazoDias)
+
+  // Com conclusão e prazo preenchidos, a data mínima é calculada; senão, é digitada.
+  const derivada =
+    form.dataConclusao && prazoDias !== null && Number.isInteger(prazoDias) && prazoDias >= 0
+      ? calcularDataMinimaLiberacao(form.dataConclusao, prazoDias)
+      : null
+  const dataMinimaLiberacao = derivada ?? form.dataMinimaManual
+
   const retencaoIlustrativa =
     valorTotalCents !== null && percentual !== null && percentual >= 0 && percentual <= 100
       ? Math.round((valorTotalCents * percentual) / 100)
@@ -46,8 +63,9 @@ export function NovoContrato() {
       percentualRetencao: percentual,
       dataInicio: form.dataInicio,
       dataTermino: form.dataTermino,
-      dataMinimaLiberacao: form.dataMinimaLiberacao,
+      dataMinimaLiberacao,
       condicoesLiberacao: form.condicoesLiberacao,
+      prazoDiasCorridos: form.dataConclusao ? prazoDias : undefined,
     }
     const novosErros = validarContrato(dados, estado.contratos)
     setErros(novosErros)
@@ -65,6 +83,9 @@ export function NovoContrato() {
         dataTermino: dados.dataTermino,
         dataMinimaLiberacao: dados.dataMinimaLiberacao,
         condicoesLiberacao: dados.condicoesLiberacao,
+        moduloFinanceiroAtivo: form.moduloFinanceiro === 'sim',
+        dataConclusao: form.dataConclusao || undefined,
+        prazoDiasCorridos: form.dataConclusao && prazoDias !== null ? prazoDias : undefined,
       }),
     )
     if (ok) navegar('/contratante/contratos')
@@ -148,14 +169,14 @@ export function NovoContrato() {
               id="valor-total"
               rotulo="Valor total do contrato (R$)"
               erro={erros.valorTotal}
-              dica="Use vírgula para os centavos. Ex.: 1.000.000,00"
+              dica="Use vírgula para os centavos. Ex.: 100.000,00"
             >
               <input
                 id="valor-total"
                 inputMode="decimal"
                 value={form.valorTotal}
                 onChange={(e) => atualizar('valorTotal')(e.target.value)}
-                placeholder="Ex.: 1.000.000,00"
+                placeholder="Ex.: 100.000,00"
               />
             </Campo>
             <Campo
@@ -170,6 +191,24 @@ export function NovoContrato() {
                 value={form.percentualRetencao}
                 onChange={(e) => atualizar('percentualRetencao')(e.target.value)}
               />
+            </Campo>
+            <Campo
+              id="modulo-financeiro"
+              rotulo="Módulo financeiro"
+              dica={
+                form.moduloFinanceiro === 'sim'
+                  ? 'Com o módulo: depósito em custódia, rendimento mensal e participação da plataforma.'
+                  : 'Sem o módulo: apenas o saldo retido e as condições de liberação.'
+              }
+            >
+              <select
+                id="modulo-financeiro"
+                value={form.moduloFinanceiro}
+                onChange={(e) => atualizar('moduloFinanceiro')(e.target.value)}
+              >
+                <option value="nao">Não ativar</option>
+                <option value="sim">Ativar módulo financeiro</option>
+              </select>
             </Campo>
           </div>
 
@@ -198,17 +237,51 @@ export function NovoContrato() {
                 onChange={(e) => atualizar('dataTermino')(e.target.value)}
               />
             </Campo>
+          </div>
+
+          <div className="grade-campos">
+            <Campo
+              id="data-conclusao"
+              rotulo="Conclusão e aceite (opcional)"
+              dica="Preenchendo aqui, a data mínima de liberação passa a ser calculada pelo prazo."
+            >
+              <input
+                id="data-conclusao"
+                type="date"
+                value={form.dataConclusao}
+                onChange={(e) => atualizar('dataConclusao')(e.target.value)}
+              />
+            </Campo>
+            <Campo
+              id="prazo-dias"
+              rotulo="Prazo (dias corridos)"
+              erro={erros.prazoDiasCorridos}
+              dica="Contado a partir do dia seguinte à conclusão."
+            >
+              <input
+                id="prazo-dias"
+                inputMode="numeric"
+                value={form.prazoDias}
+                onChange={(e) => atualizar('prazoDias')(e.target.value)}
+                disabled={!form.dataConclusao}
+              />
+            </Campo>
             <Campo
               id="data-minima"
               rotulo="Data mínima para liberação"
               erro={erros.dataMinimaLiberacao}
-              dica="Antes desta data a liberação fica bloqueada."
+              dica={
+                derivada
+                  ? `Calculada pelo prazo: ${formatarData(derivada)}`
+                  : 'Antes desta data a liberação fica bloqueada.'
+              }
             >
               <input
                 id="data-minima"
                 type="date"
-                value={form.dataMinimaLiberacao}
-                onChange={(e) => atualizar('dataMinimaLiberacao')(e.target.value)}
+                value={dataMinimaLiberacao}
+                onChange={(e) => atualizar('dataMinimaManual')(e.target.value)}
+                readOnly={Boolean(derivada)}
               />
             </Campo>
           </div>
